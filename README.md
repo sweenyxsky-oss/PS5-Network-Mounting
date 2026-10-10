@@ -14,4 +14,4 @@ The web UI is embedded in the payload and served by a native HTTP API. It defaul
 
 The source contains first-pass NFS and SMB filesystem adapters, but **has not yet been compiled with the target PS5 SDK or tested on firmware 13.60**. The build requires compatible ORBISDEV builds of patched libfuse, libnfs, and libsmb2. Do not consider the program ready until the build succeeds and real file reads plus disconnect/reconnect pass on the console.
 
-See [build prerequisites](docs/BUILD.md), [implementation status](docs/IMPLEMENTATION_STATUS.md), [API contract](docs/API.md), and the [NFS/SMB test plan](docs/NFS_TEST_PLAN.md).
+See [build prerequisites](docs/BUILD.md), [implementation status](docs/IMPLEMENTATION_STATUS.md), [API contract](docs/API.md), the [NFS/SMB test plan](docs/NFS_TEST_PLAN.md), and [third-party notices](docs/THIRD_PARTY_NOTICES.md).
