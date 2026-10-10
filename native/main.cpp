@@ -11,12 +11,20 @@
 #include <cstring>
 #include <string>
 #include <pthread.h>
+#include <cstdio>
 
 #include "mount_backend.hpp"
 #include "web_assets.hpp"
 
+extern "C" {
+int sceNetInit(void);
+int sceNetPoolCreate(const char* name, int size, int flags);
+int sceNetPoolDestroy(int pool_id);
+}
+
 namespace {
 constexpr unsigned int kDefaultPort = 18080;
+constexpr int kNetHeapSize = 5 * 1024 * 1024;
 constexpr size_t kMaxBody = 16 * 1024;
 constexpr size_t kMaxHeader = 16 * 1024;
 ps5nm::MountBackend g_mount;
@@ -308,6 +316,16 @@ void HandleClient(int fd) {
 }
 
 int main() {
+    if (sceNetInit() != 0) {
+        std::fprintf(stderr, "PS5 Network Mounting: sceNetInit failed\n");
+        return 4;
+    }
+    const int net_pool = sceNetPoolCreate("ps5-network-mounting", kNetHeapSize, 0);
+    if (net_pool < 0) {
+        std::fprintf(stderr, "PS5 Network Mounting: sceNetPoolCreate failed (%d)\n", net_pool);
+        return 5;
+    }
+
     unsigned int port = kDefaultPort;
     if (const char* env = std::getenv("PS5NM_PORT")) {
         char* end = nullptr;
@@ -320,7 +338,11 @@ int main() {
 
     (void)signal(SIGPIPE, SIG_IGN);
     const int server = socket(AF_INET, SOCK_STREAM, 0);
-    if (server < 0) return 2;
+    if (server < 0) {
+        std::fprintf(stderr, "PS5 Network Mounting: socket failed (%d)\n", errno);
+        (void)sceNetPoolDestroy(net_pool);
+        return 2;
+    }
     int reuse = 1;
     (void)setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #ifdef SO_NOSIGPIPE
@@ -332,7 +354,9 @@ int main() {
     if (inet_pton(AF_INET, bind_ip, &addr.sin_addr) != 1 ||
         bind(server, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
         listen(server, 8) != 0) {
+        std::fprintf(stderr, "PS5 Network Mounting: bind/listen failed (%d)\n", errno);
         close(server);
+        (void)sceNetPoolDestroy(net_pool);
         return 3;
     }
 
@@ -348,5 +372,6 @@ int main() {
         close(client);
     }
     close(server);
+    (void)sceNetPoolDestroy(net_pool);
     return 0;
 }
