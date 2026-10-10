@@ -154,9 +154,12 @@ MHD_Result Access(void*, MHD_Connection* conn, const char* url, const char* meth
         (void)JsonString(state->body, "username", &username);
         (void)JsonString(state->body, "password", &password);
         (void)username; (void)password; // Never log or echo credentials.
-        if (state->body.find("\\"port\\"") != std::string::npos &&
-            !JsonInt(state->body, "port", &port))
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_port", "Port must be an integer from 1 to 65535.");
+        if (state->body.find("\"port\"") != std::string::npos) {
+            if (!JsonInt(state->body, "port", &port))
+                return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_port", "Port must be an integer from 1 to 65535.");
+        } else {
+            port = protocol == "smb" ? 445 : 2049;
+        }
         if (host.empty() || host.size() > 253 ||
             host.find_first_of(" /\\\r\n\t") != std::string::npos)
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_host", "Enter a hostname or IP address only.");
