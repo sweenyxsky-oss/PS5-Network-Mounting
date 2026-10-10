@@ -257,10 +257,11 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
         if (error) *error = "libsmb2 could not initialize an SMB context.";
         return false;
     }
-    smb2_set_timeout(g_smb, 12);
+    smb2_set_timeout(g_smb, 30);
     smb2_set_security_mode(g_smb, SMB2_NEGOTIATE_SIGNING_ENABLED);
+    smb2_set_version(g_smb, SMB2_VERSION_ANY);
     smb2_set_user(g_smb, username.empty() ? "guest" : username.c_str());
-    smb2_set_password(g_smb, password.c_str());
+    if (!password.empty()) smb2_set_password(g_smb, password.c_str());
     struct smb2_url* url = smb2_parse_url(g_smb, url_text.c_str());
     if (!url || !url->server || !url->share) {
         if (error) *error = std::string("Invalid SMB share URL: ") + smb2_get_error(g_smb);
