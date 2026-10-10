@@ -1,27 +1,32 @@
-#include <microhttpd.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <signal.h>
 
-#include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
-#include <memory>
-#include <new>
-#include <pthread.h>
-#include <unistd.h>
 #include <string>
+#include <pthread.h>
 
 #include "mount_backend.hpp"
 #include "web_assets.hpp"
 
 namespace {
-constexpr unsigned short kDefaultPort = 18080;
+constexpr unsigned int kDefaultPort = 18080;
 constexpr size_t kMaxBody = 16 * 1024;
+constexpr size_t kMaxHeader = 16 * 1024;
 ps5nm::MountBackend g_mount;
 pthread_mutex_t g_mount_api_lock = PTHREAD_MUTEX_INITIALIZER;
 
-struct RequestState { std::string body; bool replied = false; };
+struct HttpResponse {
+    unsigned int status = 200;
+    std::string content_type = "application/json; charset=utf-8";
+    std::string body;
+};
 
 std::string JsonEscape(const std::string& value) {
     std::string out;
@@ -40,8 +45,6 @@ std::string JsonEscape(const std::string& value) {
 }
 std::string Quote(const std::string& s) { return "\"" + JsonEscape(s) + "\""; }
 
-// Small, bounded JSON string reader for this fixed API. It rejects escaped
-// control sequences instead of trying to interpret ambiguous path data.
 bool JsonString(const std::string& body, const char* key, std::string* out) {
     const std::string needle = std::string("\"") + key + "\"";
     auto p = body.find(needle);
@@ -67,6 +70,7 @@ bool JsonString(const std::string& body, const char* key, std::string* out) {
     }
     return false;
 }
+
 bool JsonInt(const std::string& body, const char* key, int* out) {
     const std::string needle = std::string("\"") + key + "\"";
     auto p = body.find(needle);
@@ -76,131 +80,226 @@ bool JsonInt(const std::string& body, const char* key, int* out) {
     ++p;
     while (p < body.size() && std::isspace(static_cast<unsigned char>(body[p]))) ++p;
     char* end = nullptr;
-    long v = std::strtol(body.c_str() + p, &end, 10);
-    if (end == body.c_str() + p || v < 1 || v > 65535) return false;
+    const long value = std::strtol(body.c_str() + p, &end, 10);
+    if (end == body.c_str() + p || value < 1 || value > 65535) return false;
     while (*end && std::isspace(static_cast<unsigned char>(*end))) ++end;
     if (*end != ',' && *end != '}') return false;
-    *out = static_cast<int>(v);
+    *out = static_cast<int>(value);
     return true;
 }
-MHD_Result Reply(MHD_Connection* conn, unsigned int status, const std::string& body,
-                 const char* content_type = "application/json; charset=utf-8") {
-    MHD_Response* response = MHD_create_response_from_buffer(body.size(),
-        const_cast<char*>(body.data()), MHD_RESPMEM_MUST_COPY);
-    if (!response) return MHD_NO;
-    MHD_add_response_header(response, "Content-Type", content_type);
-    MHD_add_response_header(response, "Cache-Control", "no-store");
-    MHD_add_response_header(response, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(response, "Connection", "close");
-    MHD_Result result = MHD_queue_response(conn, status, response);
-    MHD_destroy_response(response);
-    return result;
-}
-MHD_Result Status(MHD_Connection* conn) {
+
+std::string StatusJson() {
     pthread_mutex_lock(&g_mount_api_lock);
     const auto s = g_mount.Status();
     pthread_mutex_unlock(&g_mount_api_lock);
-    std::string body = "{\"state\":\"ready\",\"mounted\":" +
+    return "{\"state\":\"ready\",\"mounted\":" +
         std::string(s.mounted ? "true" : "false") + ",\"protocol\":" +
         (s.protocol.empty() ? "null" : Quote(s.protocol)) + ",\"endpoint\":" +
         (s.endpoint.empty() ? "null" : Quote(s.endpoint)) + ",\"mountpoint\":" +
         Quote(s.mountpoint) + ",\"last_result\":" + Quote(s.last_result) +
         ",\"last_error\":" + (s.last_error.empty() ? "null" : Quote(s.last_error)) + "}";
-    return Reply(conn, MHD_HTTP_OK, body);
 }
-MHD_Result ApiError(MHD_Connection* conn, unsigned int status, const char* code,
-                    const std::string& message) {
-    return Reply(conn, status, "{\"ok\":false,\"error\":" + Quote(code) +
-                 ",\"message\":" + Quote(message) + "}");
+
+HttpResponse ApiError(unsigned int status, const char* code, const std::string& message) {
+    return {status, "application/json; charset=utf-8",
+            "{\"ok\":false,\"error\":" + Quote(code) + ",\"message\":" + Quote(message) + "}"};
 }
-void Completed(void*, MHD_Connection*, void** con_cls, MHD_RequestTerminationCode) {
-    delete static_cast<RequestState*>(*con_cls);
-    *con_cls = nullptr;
-}
-MHD_Result Access(void*, MHD_Connection* conn, const char* url, const char* method,
-                  const char*, const char* upload_data, size_t* upload_data_size, void** con_cls) {
-    if (!*con_cls) {
-        *con_cls = new (std::nothrow) RequestState{};
-        return *con_cls ? MHD_YES : MHD_NO;
-    }
-    auto* state = static_cast<RequestState*>(*con_cls);
-    if (*upload_data_size) {
-        if (state->body.size() + *upload_data_size > kMaxBody) {
-            *upload_data_size = 0;
-            state->replied = true;
-            return ApiError(conn, MHD_HTTP_CONTENT_TOO_LARGE, "body_too_large",
-                            "Request body exceeds the 16 KiB limit.");
-        }
-        state->body.append(upload_data, *upload_data_size);
-        *upload_data_size = 0;
-        return MHD_YES;
-    }
-    if (state->replied) return MHD_YES;
-    state->replied = true;
-    const std::string path(url ? url : "/");
-    const std::string verb(method ? method : "GET");
-    if (verb == "GET" && (path == "/" || path == "/index.html"))
-        return Reply(conn, MHD_HTTP_OK, std::string(ps5nm::kIndexHtml), "text/html; charset=utf-8");
-    if (verb == "GET" && path == "/api/v1/status") return Status(conn);
-    if (verb == "POST" && path == "/api/v1/mount") {
+
+HttpResponse HandleRequest(const std::string& method, const std::string& raw_path,
+                           const std::string& body) {
+    std::string path = raw_path;
+    const auto query = path.find('?');
+    if (query != std::string::npos) path.resize(query);
+
+    if (method == "GET" && (path == "/" || path == "/index.html"))
+        return {200, "text/html; charset=utf-8", std::string(ps5nm::kIndexHtml)};
+    if (method == "GET" && path == "/api/v1/status")
+        return {200, "application/json; charset=utf-8", StatusJson()};
+
+    if (method == "POST" && path == "/api/v1/mount") {
         std::string protocol, host, remote, mountpoint, username, password;
         int port = 2049;
-        if (!JsonString(state->body, "protocol", &protocol) ||
-            !JsonString(state->body, "host", &host) ||
-            !JsonString(state->body, "remote_path", &remote) ||
-            !JsonString(state->body, "mountpoint", &mountpoint))
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_request",
+        if (!JsonString(body, "protocol", &protocol) ||
+            !JsonString(body, "host", &host) ||
+            !JsonString(body, "remote_path", &remote) ||
+            !JsonString(body, "mountpoint", &mountpoint))
+            return ApiError(400, "invalid_request",
                             "Required fields are missing or malformed: protocol, host, remote_path, mountpoint.");
-        (void)JsonString(state->body, "username", &username);
-        (void)JsonString(state->body, "password", &password);
-        (void)username; (void)password; // Never log or echo credentials.
-        if (state->body.find("\"port\"") != std::string::npos) {
-            if (!JsonInt(state->body, "port", &port))
-                return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_port", "Port must be an integer from 1 to 65535.");
+
+        (void)JsonString(body, "username", &username);
+        (void)JsonString(body, "password", &password);
+        if (body.find("\"port\"") != std::string::npos) {
+            if (!JsonInt(body, "port", &port))
+                return ApiError(400, "invalid_port", "Port must be an integer from 1 to 65535.");
         } else {
             port = protocol == "smb" ? 445 : 2049;
         }
+
         if (host.empty() || host.size() > 253 ||
             host.find_first_of(" /\\\r\n\t") != std::string::npos)
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_host", "Enter a hostname or IP address only.");
+            return ApiError(400, "invalid_host", "Enter a hostname or IPv4 address only.");
         if (remote.empty() || remote.size() > 1024 ||
             remote.find("..") != std::string::npos ||
             remote.find_first_of("\r\n?#") != std::string::npos)
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_remote_path",
-                            "Remote path is empty, too long, or contains unsafe characters.");
+            return ApiError(400, "invalid_remote_path", "Remote path is empty, too long, or contains unsafe characters.");
         if (protocol == "nfs" && remote.front() != '/')
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_remote_path",
-                            "NFS requires an absolute export path, for example /mnt/dataPool/games.");
+            return ApiError(400, "invalid_remote_path", "NFS requires an absolute export path, for example /mnt/dataPool/games.");
         if (protocol == "smb" && remote.front() == '/')
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_remote_path",
-                            "SMB path must be ShareName or ShareName/subfolder without a leading slash.");
+            return ApiError(400, "invalid_remote_path", "SMB path must be ShareName or ShareName/subfolder without a leading slash.");
         if (mountpoint != "/hostapp")
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "unsafe_mountpoint",
-                            "For safety, the only allowed mountpoint is /hostapp.");
+            return ApiError(400, "unsafe_mountpoint", "For safety, the only allowed mountpoint is /hostapp.");
+
         std::string error;
         pthread_mutex_lock(&g_mount_api_lock);
         const bool mounted = g_mount.Mount(protocol, host, port, remote, mountpoint,
                                            username, password, &error);
         pthread_mutex_unlock(&g_mount_api_lock);
-        if (!mounted)
-            return ApiError(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, "mount_failed", error);
-        return Status(conn);
+        if (!mounted) return ApiError(500, "mount_failed", error);
+        return {200, "application/json; charset=utf-8", StatusJson()};
     }
-    if (verb == "POST" && path == "/api/v1/unmount") {
+
+    if (method == "POST" && path == "/api/v1/unmount") {
         std::string mountpoint;
-        if (!JsonString(state->body, "mountpoint", &mountpoint))
-            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_request", "mountpoint is required.");
+        if (!JsonString(body, "mountpoint", &mountpoint))
+            return ApiError(400, "invalid_request", "mountpoint is required.");
         std::string error;
         pthread_mutex_lock(&g_mount_api_lock);
         const bool unmounted = g_mount.Unmount(mountpoint, &error);
         pthread_mutex_unlock(&g_mount_api_lock);
-        if (!unmounted)
-            return ApiError(conn, MHD_HTTP_CONFLICT, "unmount_failed", error);
-        return Status(conn);
+        if (!unmounted) return ApiError(409, "unmount_failed", error);
+        return {200, "application/json; charset=utf-8", StatusJson()};
     }
-    if (path.rfind("/api/", 0) == 0)
-        return ApiError(conn, MHD_HTTP_NOT_FOUND, "not_found", "Unknown API endpoint.");
-    return ApiError(conn, MHD_HTTP_NOT_FOUND, "not_found", "Page not found.");
+
+    return ApiError(404, "not_found", "Unknown page or API endpoint.");
+}
+
+const char* Reason(unsigned int status) {
+    switch (status) {
+    case 200: return "OK";
+    case 400: return "Bad Request";
+    case 404: return "Not Found";
+    case 409: return "Conflict";
+    case 413: return "Payload Too Large";
+    case 431: return "Request Header Fields Too Large";
+    case 500: return "Internal Server Error";
+    default: return "Internal Server Error";
+    }
+}
+
+bool SendAll(int fd, const char* data, size_t size) {
+    size_t sent = 0;
+    while (sent < size) {
+        const ssize_t n = send(fd, data + sent, size - sent, 0);
+        if (n > 0) { sent += static_cast<size_t>(n); continue; }
+        if (n < 0 && errno == EINTR) continue;
+        return false;
+    }
+    return true;
+}
+
+void SendResponse(int fd, const HttpResponse& response) {
+    const std::string header = std::string("HTTP/1.1 ") + std::to_string(response.status) +
+        " " + Reason(response.status) + "\r\nContent-Type: " + response.content_type +
+        "\r\nContent-Length: " + std::to_string(response.body.size()) +
+        "\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff" +
+        "\r\nConnection: close\r\n\r\n";
+    (void)SendAll(fd, header.data(), header.size());
+    (void)SendAll(fd, response.body.data(), response.body.size());
+}
+
+std::string Lower(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+void HandleClient(int fd) {
+    timeval timeout{5, 0};
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    std::string data;
+    char buffer[4096];
+    size_t split = std::string::npos;
+    while ((split = data.find("\r\n\r\n")) == std::string::npos) {
+        if (data.size() >= kMaxHeader) {
+            SendResponse(fd, ApiError(431, "headers_too_large", "HTTP headers exceed the 16 KiB limit."));
+            return;
+        }
+        const ssize_t n = recv(fd, buffer, sizeof(buffer), 0);
+        if (n <= 0) return;
+        data.append(buffer, static_cast<size_t>(n));
+    }
+
+    const std::string header = data.substr(0, split);
+    std::string body = data.substr(split + 4);
+    const auto line_end = header.find("\r\n");
+    const std::string request_line = header.substr(0, line_end);
+    const auto sp1 = request_line.find(' ');
+    const auto sp2 = sp1 == std::string::npos ? sp1 : request_line.find(' ', sp1 + 1);
+    if (sp1 == std::string::npos || sp2 == std::string::npos) {
+        SendResponse(fd, ApiError(400, "bad_request", "Malformed HTTP request line."));
+        return;
+    }
+    const std::string method = request_line.substr(0, sp1);
+    const std::string path = request_line.substr(sp1 + 1, sp2 - sp1 - 1);
+    const std::string version = request_line.substr(sp2 + 1);
+    if (version != "HTTP/1.1" && version != "HTTP/1.0") {
+        SendResponse(fd, ApiError(400, "bad_version", "Only HTTP/1.0 and HTTP/1.1 are supported."));
+        return;
+    }
+
+    size_t content_length = 0;
+    bool has_content_length = false;
+    size_t pos = line_end == std::string::npos ? header.size() : line_end + 2;
+    while (pos < header.size()) {
+        const auto end = header.find("\r\n", pos);
+        const std::string line = header.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        const auto colon = line.find(':');
+        if (colon == std::string::npos) {
+            SendResponse(fd, ApiError(400, "bad_header", "Malformed HTTP header."));
+            return;
+        }
+        const std::string key = Lower(line.substr(0, colon));
+        std::string value = line.substr(colon + 1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.erase(value.begin());
+        if (key == "content-length") {
+            if (has_content_length) {
+                SendResponse(fd, ApiError(400, "duplicate_length", "Duplicate Content-Length headers are not accepted."));
+                return;
+            }
+            char* tail = nullptr;
+            const unsigned long parsed = std::strtoul(value.c_str(), &tail, 10);
+            if (tail == value.c_str() || *tail != '\0') {
+                SendResponse(fd, ApiError(400, "bad_length", "Invalid Content-Length header."));
+                return;
+            }
+            content_length = static_cast<size_t>(parsed);
+            has_content_length = true;
+        } else if (key == "transfer-encoding" && Lower(value) != "identity") {
+            SendResponse(fd, ApiError(400, "unsupported_encoding", "Chunked request bodies are not supported."));
+            return;
+        }
+        if (end == std::string::npos) break;
+        pos = end + 2;
+    }
+
+    if (content_length > kMaxBody) {
+        SendResponse(fd, ApiError(413, "body_too_large", "Request body exceeds the 16 KiB limit."));
+        return;
+    }
+    if (body.size() > content_length) body.resize(content_length);
+    while (body.size() < content_length) {
+        const size_t want = content_length - body.size() < sizeof(buffer) ?
+            content_length - body.size() : sizeof(buffer);
+        const ssize_t n = recv(fd, buffer, want, 0);
+        if (n <= 0) {
+            SendResponse(fd, ApiError(400, "incomplete_body", "Request body ended before Content-Length bytes arrived."));
+            return;
+        }
+        body.append(buffer, static_cast<size_t>(n));
+    }
+
+    SendResponse(fd, HandleRequest(method, path, body));
 }
 }
 
@@ -208,27 +307,42 @@ int main() {
     unsigned int port = kDefaultPort;
     if (const char* env = std::getenv("PS5NM_PORT")) {
         char* end = nullptr;
-        long value = std::strtol(env, &end, 10);
+        const long value = std::strtol(env, &end, 10);
         if (end != env && *end == '\0' && value >= 1024 && value <= 65535)
             port = static_cast<unsigned int>(value);
     }
-    // Bind only to the console loopback interface; the UI is opened locally.
-    sockaddr_in bind_addr{};
-    bind_addr.sin_family = AF_INET;
-    bind_addr.sin_port = htons(static_cast<uint16_t>(port));
-    bind_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    MHD_Daemon* daemon = MHD_start_daemon(
-        MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG,
-        static_cast<uint16_t>(port), nullptr, nullptr, &Access, nullptr,
-        MHD_OPTION_SOCK_ADDR, static_cast<const sockaddr*>(static_cast<void*>(&bind_addr)),
-        MHD_OPTION_NOTIFY_COMPLETED, &Completed, nullptr,
-        MHD_OPTION_CONNECTION_TIMEOUT, static_cast<unsigned int>(15),
-        MHD_OPTION_THREAD_POOL_SIZE, static_cast<unsigned int>(4),
-        MHD_OPTION_END);
-    if (!daemon) return 2;
-    // A payload normally stays resident; a graceful process termination is
-    // handled by the OS. The SDK's process lifecycle ends the HTTP daemon.
-    for (;;) sleep(3600);
-    MHD_stop_daemon(daemon);
+    const char* bind_ip = std::getenv("PS5NM_BIND");
+    if (!bind_ip || !*bind_ip) bind_ip = "127.0.0.1";
+
+    (void)signal(SIGPIPE, SIG_IGN);
+    const int server = socket(AF_INET, SOCK_STREAM, 0);
+    if (server < 0) return 2;
+    int reuse = 1;
+    (void)setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#ifdef SO_NOSIGPIPE
+    (void)setsockopt(server, SOL_SOCKET, SO_NOSIGPIPE, &reuse, sizeof(reuse));
+#endif
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET, bind_ip, &addr.sin_addr) != 1 ||
+        bind(server, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
+        listen(server, 8) != 0) {
+        close(server);
+        return 3;
+    }
+
+    for (;;) {
+        sockaddr_in peer{};
+        socklen_t peer_size = sizeof(peer);
+        const int client = accept(server, reinterpret_cast<sockaddr*>(&peer), &peer_size);
+        if (client < 0) {
+            if (errno == EINTR) continue;
+            continue;
+        }
+        HandleClient(client);
+        close(client);
+    }
+    close(server);
     return 0;
 }
