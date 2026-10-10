@@ -102,7 +102,8 @@ std::string StatusJson() {
     const auto s = g_mount.Status();
     pthread_mutex_unlock(&g_mount_api_lock);
     return "{\"state\":\"ready\",\"mounted\":" +
-        std::string(s.mounted ? "true" : "false") + ",\"protocol\":" +
+        std::string(s.mounted ? "true" : "false") + ",\"can_disconnect\":" +
+        std::string(s.can_disconnect ? "true" : "false") + ",\"protocol\":" +
         (s.protocol.empty() ? "null" : Quote(s.protocol)) + ",\"endpoint\":" +
         (s.endpoint.empty() ? "null" : Quote(s.endpoint)) + ",\"mountpoint\":" +
         Quote(s.mountpoint) + ",\"last_result\":" + Quote(s.last_result) +
