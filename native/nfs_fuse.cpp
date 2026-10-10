@@ -1,5 +1,6 @@
 #include "nfs_fuse.hpp"
 
+#define FUSE_USE_VERSION 26
 #include <fuse/fuse.h>
 #include <orbisNfs.h>
 
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <string>
@@ -34,15 +36,48 @@ std::string g_last_error;
 bool SafePath(const char* path) {
     if (!path || path[0] != '/') return false;
     const std::string s(path);
-    return s.find("/../") == std::string::npos &&
-           s.find("/./") == std::string::npos &&
-           s != "/.." && s != "/.";
+    if (s.size() > 4096 || s.find('\\') != std::string::npos ||
+        s.find_first_of("\r\n") != std::string::npos) return false;
+    size_t start = 1;
+    while (start <= s.size()) {
+        const size_t end = s.find('/', start);
+        const std::string part = s.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (part == "." || part == "..") return false;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return true;
+}
+std::string NfsPath(const char* path) {
+    std::string relative = path ? path : "/";
+    while (!relative.empty() && relative.front() == '/') relative.erase(relative.begin());
+    return relative;
+}
+bool MountpointIsEmpty(const std::string& mountpoint, std::string* error) {
+    DIR* dir = opendir(mountpoint.c_str());
+    if (!dir) {
+        if (error) *error = "Cannot open /hostapp. Verify that the directory exists and is accessible.";
+        return false;
+    }
+    bool empty = true;
+    struct dirent* ent = nullptr;
+    while ((ent = readdir(dir)) != nullptr) {
+        if (std::strcmp(ent->d_name, ".") != 0 && std::strcmp(ent->d_name, "..") != 0) {
+            empty = false;
+            break;
+        }
+    }
+    closedir(dir);
+    if (!empty && error)
+        *error = "/hostapp is not empty. Move its contents elsewhere before mounting; this payload will not hide existing files.";
+    return empty;
 }
 int FsGetattr(const char* path, struct stat* st) {
     if (!SafePath(path) || !st) return -EINVAL;
     struct nfs_stat_64 ns{};
+    const std::string remote = NfsPath(path);
     pthread_mutex_lock(&g_lock);
-    const int rc = nfs_stat64(g_nfs, path, &ns);
+    const int rc = nfs_stat64(g_nfs, remote.c_str(), &ns);
     pthread_mutex_unlock(&g_lock);
     if (rc < 0) return rc;
     std::memset(st, 0, sizeof(*st));
@@ -61,25 +96,29 @@ int FsGetattr(const char* path, struct stat* st) {
 }
 int FsReadlink(const char* path, char* buf, size_t size) {
     if (!SafePath(path) || !buf || size == 0 || size > 1024 * 1024) return -EINVAL;
+    const std::string remote = NfsPath(path);
     pthread_mutex_lock(&g_lock);
-    const int rc = nfs_readlink(g_nfs, path, buf, static_cast<int>(size - 1));
+    const int rc = nfs_readlink(g_nfs, remote.c_str(), buf, static_cast<int>(size - 1));
     pthread_mutex_unlock(&g_lock);
     if (rc < 0) return rc;
     buf[size - 1] = '\0';
     return 0;
 }
-int FsReaddir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t, struct fuse_file_info*) {
-    if (!SafePath(path)) return -EINVAL;
+int FsReaddir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info*) {
+    if (!SafePath(path) || offset < 0) return -EINVAL;
+    const std::string remote = NfsPath(path);
     struct nfsdir* dir = nullptr;
     pthread_mutex_lock(&g_lock);
-    const int rc = nfs_opendir(g_nfs, path, &dir);
+    const int rc = nfs_opendir(g_nfs, remote.c_str(), &dir);
     if (rc < 0) {
         pthread_mutex_unlock(&g_lock);
         return rc;
     }
     struct nfsdirent* ent = nullptr;
+    off_t index = 0;
     while ((ent = nfs_readdir(g_nfs, dir)) != nullptr) {
-        if (filler(buffer, ent->name, nullptr, 0) != 0) break;
+        if (index++ < offset) continue;
+        if (filler(buffer, ent->name, nullptr, index) != 0) break;
     }
     nfs_closedir(g_nfs, dir);
     pthread_mutex_unlock(&g_lock);
@@ -89,8 +128,9 @@ int FsOpen(const char* path, struct fuse_file_info* fi) {
     if (!SafePath(path) || !fi) return -EINVAL;
     if ((fi->flags & O_ACCMODE) != O_RDONLY) return -EROFS;
     struct nfsfh* fh = nullptr;
+    const std::string remote = NfsPath(path);
     pthread_mutex_lock(&g_lock);
-    const int rc = nfs_open(g_nfs, path, O_RDONLY, &fh);
+    const int rc = nfs_open(g_nfs, remote.c_str(), O_RDONLY, &fh);
     pthread_mutex_unlock(&g_lock);
     if (rc < 0) return rc;
     fi->fh = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fh));
@@ -112,6 +152,26 @@ int FsRelease(const char*, struct fuse_file_info* fi) {
     pthread_mutex_unlock(&g_lock);
     fi->fh = 0;
     return rc;
+}
+int FsStatfs(const char* path, struct statvfs* st) {
+    if (!SafePath(path) || !st) return -EINVAL;
+    const std::string remote = NfsPath(path);
+    struct nfs_statvfs_64 ns{};
+    pthread_mutex_lock(&g_lock);
+    const int rc = nfs_statvfs64(g_nfs, remote.c_str(), &ns);
+    pthread_mutex_unlock(&g_lock);
+    if (rc < 0) return rc;
+    std::memset(st, 0, sizeof(*st));
+    st->f_bsize = static_cast<unsigned long>(ns.f_bsize);
+    st->f_frsize = static_cast<unsigned long>(ns.f_frsize);
+    st->f_blocks = static_cast<fsblkcnt_t>(ns.f_blocks);
+    st->f_bfree = static_cast<fsblkcnt_t>(ns.f_bfree);
+    st->f_bavail = static_cast<fsblkcnt_t>(ns.f_bavail);
+    st->f_files = static_cast<fsfilcnt_t>(ns.f_files);
+    st->f_ffree = static_cast<fsfilcnt_t>(ns.f_ffree);
+    st->f_favail = static_cast<fsfilcnt_t>(ns.f_favail);
+    st->f_namemax = static_cast<unsigned long>(ns.f_namemax);
+    return 0;
 }
 struct fuse_operations g_ops = {};
 void* FuseLoop(void*) {
@@ -155,6 +215,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         if (error) *error = "The /hostapp directory does not exist or is not a directory; no files were changed.";
         return false;
     }
+    if (!MountpointIsEmpty(mountpoint, error)) return false;
 
     std::string url = "nfs://" + host + export_path + "?nfsport=" + std::to_string(port);
     g_nfs = nfs_init_context();
@@ -181,6 +242,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
     g_ops.open = FsOpen;
     g_ops.read = FsRead;
     g_ops.release = FsRelease;
+    g_ops.statfs = FsStatfs;
 
     char arg0[] = "ps5-network-mounting";
     char arg1[] = "-o";
