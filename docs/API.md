@@ -6,7 +6,7 @@ The UI in `web/index.html` is embedded into the native payload. It calls same-or
 
 ### GET /api/v1/status
 
-Returns actual backend mount state, including `mounted`, `protocol`, `endpoint`, `mountpoint`, `last_result`, and `last_error`. A successful TCP connection alone must never be reported as a mount.
+Returns actual backend mount state, including `mounted`, `can_disconnect`, `protocol`, `endpoint`, `mountpoint`, `last_result`, and `last_error`. `can_disconnect` remains true for a stale payload-owned mount whose FUSE loop stopped, so the UI can still clean it up. A successful TCP connection alone must never be reported as a mount.
 
 ### POST /api/v1/mount
 
