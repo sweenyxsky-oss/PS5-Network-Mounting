@@ -47,14 +47,14 @@ jobs:
             popd
           done
           test -f "$PS5_PAYLOAD_SDK/toolchain/prospero.mk"
-          find "$ORBISDEV/usr/include" -maxdepth 3 \( -path '*/nfsc/libnfs.h' -o -path '*/smb2/libsmb2.h' \) -print
-          test -f "$ORBISDEV/usr/include/nfsc/libnfs.h"
-          test -f "$ORBISDEV/usr/include/smb2/libsmb2.h"
-          test -f "$ORBISDEV/usr/lib/libnfs.a"
-          test -f "$ORBISDEV/usr/lib/libsmb2.a"
-          test -f "$ORBISDEV/usr/lib/libssl.a"
-          test -f "$ORBISDEV/usr/lib/libcrypto.a"
-          test -f "$ORBISDEV/usr/lib/libz.a"
+          find "$ORBISDEV/include" -maxdepth 3 \( -path '*/nfsc/libnfs.h' -o -path '*/smb2/libsmb2.h' \) -print
+          test -f "$ORBISDEV/include/nfsc/libnfs.h"
+          test -f "$ORBISDEV/include/smb2/libsmb2.h"
+          test -f "$ORBISDEV/lib/libnfs.a"
+          test -f "$ORBISDEV/lib/libsmb2.a"
+          test -f "$ORBISDEV/lib/libssl.a"
+          test -f "$ORBISDEV/lib/libcrypto.a"
+          test -f "$ORBISDEV/lib/libz.a"
 
       - name: Fetch Itemzflow FUSE compatibility source
         run: |
@@ -68,18 +68,18 @@ jobs:
           set -eux
           SRC="$ITEMZFLOW_ROOT/external/libfuse/source"
           INC="$ITEMZFLOW_ROOT/external/libfuse/include"
-          mkdir -p /tmp/ps5-fuse-obj "$ORBISDEV/usr/lib"
+          mkdir -p /tmp/ps5-fuse-obj "$ORBISDEV/lib"
           CC="$PS5_PAYLOAD_SDK/bin/prospero-clang"
           AR="$PS5_PAYLOAD_SDK/bin/prospero-ar"
-          CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -D_REENTRANT -DFUSE_USE_VERSION=26 -DHAVE_CONFIG_H -D__ORBIS__=1 -D_ORBIS_ -D__FreeBSD__=9 -I$INC -I$ITEMZFLOW_ROOT/itemz-daemon/include/fuse -I$ITEMZFLOW_ROOT/itemz-daemon/include -I$ORBISDEV/usr/include -I$ORBISDEV/usr/include/orbis"
+          CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -D_REENTRANT -DFUSE_USE_VERSION=26 -DHAVE_CONFIG_H -D__ORBIS__=1 -D_ORBIS_ -D__FreeBSD__=9 -I$INC -I$ITEMZFLOW_ROOT/itemz-daemon/include/fuse -I$ITEMZFLOW_ROOT/itemz-daemon/include -I$ORBISDEV/include -I$ORBISDEV/include/orbis"
           SOURCES="fuse.c fuse_kern_chan.c fuse_loop.c fuse_loop_mt.c fuse_lowlevel.c fuse_mt.c fuse_opt.c fuse_session.c fuse_signals.c cuse_lowlevel.c helper.c ulockmgr.c modules/subdir.c mount_bsd.c"
           for source in $SOURCES; do
             object="/tmp/ps5-fuse-obj/${source//\//_}.o"
             "$CC" $CFLAGS -c "$SRC/$source" -o "$object"
           done
-          "$AR" rcs "$ORBISDEV/usr/lib/libfuse.a" /tmp/ps5-fuse-obj/*.o
-          test -s "$ORBISDEV/usr/lib/libfuse.a"
-          ls -lh "$ORBISDEV/usr/lib/libfuse.a"
+          "$AR" rcs "$ORBISDEV/lib/libfuse.a" /tmp/ps5-fuse-obj/*.o
+          test -s "$ORBISDEV/lib/libfuse.a"
+          ls -lh "$ORBISDEV/lib/libfuse.a"
 
       - name: Build full payload with NFS and SMB enabled
         run: |
