@@ -4,7 +4,7 @@ TARGET := $(BUILD)/PS5NetworkMounting.elf
 SRC := native/main.cpp native/mount_backend.cpp
 INCLUDES := -Inative -I$(PS5_PAYLOAD_SDK)/target/include -I$(PS5_PAYLOAD_SDK)/target/user/homebrew/include
 CXXFLAGS_PS5 := -std=c++17 -O2 -Wall -Wextra
-LDFLAGS_PS5 := $(PS5_PAYLOAD_SDK)/target/lib/libmicrohttpd.a -L$(PS5_PAYLOAD_SDK)/target/lib -lpthread -lkernel_sys -lSceNet -lSceNetCtl
+LDFLAGS_PS5 := -L$(PS5_PAYLOAD_SDK)/target/lib -lpthread -lkernel_sys -lSceNet -lSceNetCtl
 
 PS5NM_WITH_FUSE ?= 1
 ifeq ($(PS5NM_WITH_FUSE),1)
