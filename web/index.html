@@ -95,10 +95,10 @@ footer{max-width:1100px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
  function applyStatus(data){
   $('apiStatus').textContent='Online'; $('statusProtocol').textContent=data.protocol||'—'; $('endpoint').textContent=data.endpoint||'—';
   $('mountpointStatus').textContent=data.mountpoint||$('mountpoint').value||'/hostapp';
-  $('fsState').textContent=data.mounted?'Mounted':(data.state||'Not mounted');
+  $('fsState').textContent=data.mounted?'Mounted':'Not mounted';
   $('lastResult').textContent=data.last_error||data.last_result||'—';
   const pill=$('statusPill');pill.textContent=data.mounted?'Mounted':(data.state||'Ready');pill.className='pill '+(data.mounted?'good':'warn');
-  $('disconnectBtn').disabled=!data.mounted;
+  $('disconnectBtn').disabled=!(data.can_disconnect!==undefined?data.can_disconnect:data.mounted);
  }
  async function refresh(){
   try{applyStatus(await api('/status'))}
