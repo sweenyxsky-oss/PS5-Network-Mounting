@@ -14,10 +14,16 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/mount.h>
 #include <time.h>
 #include <type_traits>
 #include <unistd.h>
 #include <vector>
+
+extern "C" {
+struct fuse_chan* fuse_kern_chan_new(int fd);
+int fuse_mount_compat25(const char*, struct fuse_args*, const struct fuse_operations*);
+}
 
 namespace ps5nm {
 namespace {
@@ -279,7 +285,9 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
     char arg5[] = "-f";
     char* argv[] = {arg0, arg1, arg2, arg3, arg4, arg5, nullptr};
     struct fuse_args args = FUSE_ARGS_INIT(6, argv);
-    g_channel = fuse_mount(mountpoint.c_str(), &args);
+    const int fuse_fd = fuse_mount_compat25(mountpoint.c_str(), &args, &g_ops);
+    g_channel = fuse_fd >= 0 ? fuse_kern_chan_new(fuse_fd) : nullptr;
+    if (!g_channel && fuse_fd >= 0) close(fuse_fd);
     if (!g_channel) {
         if (error) *error = "FUSE could not attach to /hostapp. Check firmware support and whether another mount owns that path.";
         fuse_opt_free_args(&args);
@@ -290,6 +298,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
     fuse_opt_free_args(&args);
     if (!g_fuse) {
         if (error) *error = "FUSE mounted the channel but could not initialize filesystem operations.";
+        (void)unmount(mountpoint.c_str(), MNT_FORCE);
         fuse_unmount(mountpoint.c_str(), g_channel);
         g_channel = nullptr;
         CleanupNfs();
@@ -347,6 +356,12 @@ bool StopNfsFuse(const std::string& mountpoint, std::string* error) {
         if (error) *error = "No NFS mount owned by this payload is active.";
         return false;
     }
+    pthread_mutex_unlock(&g_lock);
+    if (unmount(mountpoint.c_str(), MNT_FORCE) != 0) {
+        if (error) *error = std::string("Kernel FUSE unmount failed: ") + std::strerror(errno);
+        return false;
+    }
+    pthread_mutex_lock(&g_lock);
     g_mounted = false;
     fuse_exit(g_fuse);
     pthread_mutex_unlock(&g_lock);

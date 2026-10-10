@@ -17,8 +17,14 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/mount.h>
 #include <time.h>
 #include <unistd.h>
+
+extern "C" {
+struct fuse_chan* fuse_kern_chan_new(int fd);
+int fuse_mount_compat25(const char*, struct fuse_args*, const struct fuse_operations*);
+}
 
 namespace ps5nm {
 namespace {
@@ -308,7 +314,9 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     char arg5[] = "-f";
     char* argv[] = {arg0, arg1, arg2, arg3, arg4, arg5, nullptr};
     struct fuse_args args = FUSE_ARGS_INIT(6, argv);
-    g_smb_channel = fuse_mount(mountpoint.c_str(), &args);
+    const int fuse_fd = fuse_mount_compat25(mountpoint.c_str(), &args, &g_smb_ops);
+    g_smb_channel = fuse_fd >= 0 ? fuse_kern_chan_new(fuse_fd) : nullptr;
+    if (!g_smb_channel && fuse_fd >= 0) close(fuse_fd);
     if (!g_smb_channel) {
         if (error) *error = "FUSE could not attach to /hostapp. Check firmware support and whether another mount owns that path.";
         fuse_opt_free_args(&args);
@@ -319,6 +327,7 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     fuse_opt_free_args(&args);
     if (!g_smb_fuse) {
         if (error) *error = "FUSE attached the channel but could not initialize SMB filesystem operations.";
+        (void)unmount(mountpoint.c_str(), MNT_FORCE);
         fuse_unmount(mountpoint.c_str(), g_smb_channel);
         g_smb_channel = nullptr;
         CleanupSmb();
@@ -377,6 +386,12 @@ bool StopSmbFuse(const std::string& mountpoint, std::string* error) {
         if (error) *error = "No SMB mount owned by this payload is active.";
         return false;
     }
+    pthread_mutex_unlock(&g_smb_lock);
+    if (unmount(mountpoint.c_str(), MNT_FORCE) != 0) {
+        if (error) *error = std::string("Kernel FUSE unmount failed: ") + std::strerror(errno);
+        return false;
+    }
+    pthread_mutex_lock(&g_smb_lock);
     g_smb_mounted = false;
     fuse_exit(g_smb_fuse);
     pthread_mutex_unlock(&g_smb_lock);
