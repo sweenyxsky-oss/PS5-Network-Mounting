@@ -138,6 +138,8 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
 
         (void)JsonString(body, "username", &username);
         (void)JsonString(body, "password", &password);
+        if (protocol != "nfs" && protocol != "smb")
+            return ApiError(400, "unsupported_protocol", "Choose NFS or SMB.");
         if (body.find("\"port\"") != std::string::npos) {
             if (!JsonInt(body, "port", &port))
                 return ApiError(400, "invalid_port", "Port must be an integer from 1 to 65535.");
