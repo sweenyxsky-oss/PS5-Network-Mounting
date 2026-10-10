@@ -20,7 +20,7 @@ Do not treat a successful compile or a successful server login as proof that the
 
 ## PS5 test sequence
 
-- Build with the PS5 payload SDK and compatible patched libfuse, liborbisNfs, and libsmb2.
+- Build with the PS5 payload SDK and compatible patched libfuse, libnfs, and libsmb2.
 - Launch the ELF and open `http://127.0.0.1:18080/` in the PS5 browser.
 - Refresh status. Before connecting, status must say not mounted.
 - Verify that a non-empty `/hostapp` is rejected without hiding its contents.
