@@ -162,7 +162,7 @@ MHD_Result Access(void*, MHD_Connection* conn, const char* url, const char* meth
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_host", "Enter a hostname or IP address only.");
         if (remote.empty() || remote.size() > 1024 ||
             remote.find("..") != std::string::npos ||
-            remote.find_first_of("\\r\\n?#") != std::string::npos)
+            remote.find_first_of("\r\n?#") != std::string::npos)
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_remote_path",
                             "Remote path is empty, too long, or contains unsafe characters.");
         if (protocol == "nfs" && remote.front() != '/')
