@@ -16,8 +16,8 @@ ifeq ($(wildcard $(ITEMZFLOW_ROOT)/itemz-daemon/include/fuse/fuse.h),)
 $(error Set ITEMZFLOW_ROOT to the Itemzflow source checkout containing itemz-daemon/include/fuse/fuse.h)
 endif
 SRC += native/nfs_fuse.cpp native/smb_fuse.cpp
-CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -D_ORBIS_ -D__Freebsd__ -I$(ITEMZFLOW_ROOT)/itemz-daemon/include -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
-LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lnfs -lsmb2 -lssl -lcrypto -lz -lc++ -lc++abi -lc++experimental -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub -lpthread
+CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -D_ORBIS_ -D__Freebsd__ -I$(ITEMZFLOW_ROOT)/itemz-daemon/include -I$(ORBISDEV)/include -I$(ORBISDEV)/include/orbis
+LDFLAGS_PS5 += -L$(ORBISDEV)/lib -lfuse -lnfs -lsmb2 -lssl -lcrypto -lz -lc++ -lc++abi -lc++experimental -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub -lpthread
 CHECK_FUSE := check-fuse-sdk
 else
 CHECK_FUSE :=
@@ -35,14 +35,14 @@ check-sdk:
 
 check-fuse-sdk:
 	@test -f "$(ITEMZFLOW_ROOT)/itemz-daemon/include/fuse/fuse.h" || (echo "Itemzflow patched FUSE headers missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/include/nfsc/libnfs.h" || (echo "ORBISDEV libnfs headers missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/include/smb2/libsmb2.h" || (echo "ORBISDEV libsmb2 headers missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/lib/libfuse.a" || (echo "ORBISDEV libfuse.a missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/lib/libnfs.a" || (echo "ORBISDEV libnfs.a missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/lib/libsmb2.a" || (echo "ORBISDEV libsmb2.a missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/lib/libcrypto.a" || (echo "ORBISDEV libcrypto.a missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/lib/libssl.a" || (echo "ORBISDEV libssl.a missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/lib/libz.a" || (echo "ORBISDEV libz.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/include/nfsc/libnfs.h" || (echo "ORBISDEV libnfs headers missing"; exit 1)
+	@test -f "$(ORBISDEV)/include/smb2/libsmb2.h" || (echo "ORBISDEV libsmb2 headers missing"; exit 1)
+	@test -f "$(ORBISDEV)/lib/libfuse.a" || (echo "ORBISDEV libfuse.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/lib/libnfs.a" || (echo "ORBISDEV libnfs.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/lib/libsmb2.a" || (echo "ORBISDEV libsmb2.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/lib/libcrypto.a" || (echo "ORBISDEV libcrypto.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/lib/libssl.a" || (echo "ORBISDEV libssl.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/lib/libz.a" || (echo "ORBISDEV libz.a missing"; exit 1)
 
 native/web_assets.hpp: web/index.html tools/embed_ui.py
 	python3 tools/embed_ui.py $< $@
