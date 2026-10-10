@@ -239,6 +239,12 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
     g_nfs_connected = true;
+    struct nfs_stat_64 root_stat{};
+    if (nfs_stat64(g_nfs, "", &root_stat) != 0) {
+        if (error) *error = std::string("NFS export mounted but root metadata is unreadable: ") + nfs_get_error(g_nfs);
+        CleanupNfs();
+        return false;
+    }
 
     g_ops.getattr = FsGetattr;
     g_ops.readlink = FsReadlink;
