@@ -1,9 +1,6 @@
 name: PS5 full NFS and SMB payload build
 
 on:
-  push:
-    branches:
-      - chore/full-nfs-smb-ci-build
   pull_request:
   workflow_dispatch:
 
@@ -11,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ps5-full-mount-targeted-${{ github.ref }}
+  group: ps5-full-mount-targeted-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
