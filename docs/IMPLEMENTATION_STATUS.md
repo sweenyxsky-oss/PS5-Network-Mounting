@@ -11,6 +11,8 @@
 
 ## Not verified
 
+The GitHub Actions source workflow includes a host compiler/API smoke test for the HTTP scaffold. That test does not compile the FUSE adapters or validate PS5 ABI compatibility.
+
 The project has not yet been compiled with the target PS5 SDK or tested on firmware 13.60. The build depends on patched PS5-compatible libfuse, libnfs, and libsmb2 libraries under ORBISDEV. ABI and link compatibility remain unproven.
 
 The adapters must be tested on console for export/share access, file listing, metadata, file reads, large files, permissions, wrong credentials, server disconnect, unmount, and reconnect. The current code is an implementation attempt, not a verified release.
