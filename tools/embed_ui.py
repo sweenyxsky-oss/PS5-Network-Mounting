@@ -9,7 +9,7 @@ def main() -> int:
         return 2
     source = Path(sys.argv[1]).read_text(encoding="utf-8")
     delimiter = "PS5NMHTML"
-    if f"){delimiter}\\"" in source:
+    if f"){delimiter}\"" in source:
         print("HTML contains the reserved C++ raw-string delimiter", file=sys.stderr)
         return 1
     output = (
