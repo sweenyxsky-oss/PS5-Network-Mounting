@@ -16,8 +16,8 @@ ifeq ($(wildcard $(ITEMZFLOW_ROOT)/itemz-daemon/include/fuse/fuse.h),)
 $(error Set ITEMZFLOW_ROOT to the Itemzflow source checkout containing itemz-daemon/include/fuse/fuse.h)
 endif
 SRC += native/nfs_fuse.cpp native/smb_fuse.cpp
-CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ITEMZFLOW_ROOT)/itemz-daemon/include -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
-LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lnfs -lsmb2 -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
+CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -D_ORBIS_ -D__Freebsd__ -I$(ITEMZFLOW_ROOT)/itemz-daemon/include -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
+LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lnfs -lsmb2 -lcrypto -lssl -lz -lc++ -lc++abi -lc++experimental -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
 CHECK_FUSE := check-fuse-sdk
 else
 CHECK_FUSE :=
