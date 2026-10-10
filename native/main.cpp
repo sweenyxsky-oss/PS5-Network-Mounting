@@ -229,6 +229,10 @@ void HandleClient(int fd) {
         if (n <= 0) return;
         data.append(buffer, static_cast<size_t>(n));
     }
+    if (split > kMaxHeader) {
+        SendResponse(fd, ApiError(431, "headers_too_large", "HTTP headers exceed the 16 KiB limit."));
+        return;
+    }
 
     const std::string header = data.substr(0, split);
     std::string body = data.substr(split + 4);
