@@ -1,0 +1,31 @@
+name: Source checks
+
+on:
+  push:
+    branches: ["main", "dev/first-web-payload"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  source-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Check UI generator syntax
+        run: python -m py_compile tools/embed_ui.py
+      - name: Check embedded UI is up to date
+        run: |
+          python tools/embed_ui.py web/index.html /tmp/web_assets.hpp
+          cmp native/web_assets.hpp /tmp/web_assets.hpp
+      - name: Check protocol scope
+        run: |
+          grep -q 'value="nfs"' web/index.html
+          grep -q 'value="smb"' web/index.html
+          ! grep -Eiq 'value="(ftp|sftp)"' web/index.html
+          grep -q 'native/nfs_fuse.cpp' Makefile
+          grep -q 'native/smb_fuse.cpp' Makefile
+      - name: Check whitespace
+        run: git show --check --oneline HEAD
