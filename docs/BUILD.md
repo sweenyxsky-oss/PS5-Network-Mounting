@@ -3,7 +3,7 @@
 The default build includes both read-only filesystem adapters. It requires:
 
 - PS5 payload SDK, including `toolchain/prospero.mk` (the HTTP server uses POSIX sockets and has no libmicrohttpd dependency)
-- PS5-compatible patched libfuse, including `fuse_fw_supported()`
+- Itemzflow's patched FUSE headers (`itemz-daemon/include/fuse`) and an ORBISDEV `libfuse` that exports `fuse_fw_supported()`
 - ORBISDEV `libnfs`
 - ORBISDEV-compiled `libsmb2`
 - Compatible headers and static libraries under the ORBISDEV prefix
@@ -11,7 +11,7 @@ The default build includes both read-only filesystem adapters. It requires:
 Build:
 
 ```sh
-make PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk ORBISDEV=/path/to/orbisdev
+make PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk ORBISDEV=/path/to/orbisdev ITEMZFLOW_ROOT=/path/to/Itemzflow
 ```
 
 Build only the native UI/API scaffold (no actual filesystem mounting):
