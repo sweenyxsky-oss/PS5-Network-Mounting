@@ -7,12 +7,16 @@ CXXFLAGS_PS5 := -std=c++17 -O2 -Wall -Wextra
 LDFLAGS_PS5 := -L$(PS5_PAYLOAD_SDK)/target/lib -lpthread -lkernel_sys -lSceNet -lSceNetCtl
 
 PS5NM_WITH_FUSE ?= 1
+ITEMZFLOW_ROOT ?= ../Itemzflow
 ifeq ($(PS5NM_WITH_FUSE),1)
 ifndef ORBISDEV
 $(error Set ORBISDEV to an SDK with PS5-compatible libfuse, libnfs, and libsmb2 installed)
 endif
+ifeq ($(wildcard $(ITEMZFLOW_ROOT)/itemz-daemon/include/fuse/fuse.h),)
+$(error Set ITEMZFLOW_ROOT to the Itemzflow source checkout containing itemz-daemon/include/fuse/fuse.h)
+endif
 SRC += native/nfs_fuse.cpp native/smb_fuse.cpp
-CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
+CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ITEMZFLOW_ROOT)/itemz-daemon/include -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
 LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lnfs -lsmb2 -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
 CHECK_FUSE := check-fuse-sdk
 else
@@ -30,7 +34,7 @@ check-sdk:
 	@test -f "$(PS5_PAYLOAD_SDK)/toolchain/prospero.mk" || (echo "PS5 SDK toolchain not found"; exit 1)
 
 check-fuse-sdk:
-	@test -f "$(ORBISDEV)/usr/include/fuse/fuse.h" || (echo "ORBISDEV FUSE headers missing"; exit 1)
+	@test -f "$(ITEMZFLOW_ROOT)/itemz-daemon/include/fuse/fuse.h" || (echo "Itemzflow patched FUSE headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/include/nfsc/libnfs.h" || (echo "ORBISDEV libnfs headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/include/smb2/libsmb2.h" || (echo "ORBISDEV libsmb2 headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/libfuse.a" || (echo "ORBISDEV libfuse.a missing"; exit 1)
