@@ -4,7 +4,7 @@ The default build includes both read-only filesystem adapters. It requires:
 
 - PS5 payload SDK, including `toolchain/prospero.mk` (the HTTP server uses POSIX sockets and has no libmicrohttpd dependency)
 - PS5-compatible patched libfuse, including `fuse_fw_supported()`
-- ORBISDEV `liborbisNfs`
+- ORBISDEV `libnfs`
 - ORBISDEV-compiled `libsmb2`
 - Compatible headers and static libraries under the ORBISDEV prefix
 
