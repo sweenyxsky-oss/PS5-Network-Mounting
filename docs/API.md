@@ -1,83 +1,60 @@
 # Web API v1
 
-The first UI in `web/index.html` is served by the PS5 payload itself. The browser uses same-origin requests; do not hard-code a remote API hostname.
+The UI in `web/index.html` is embedded into the native payload. It calls same-origin endpoints.
 
 ## Endpoints
 
 ### GET /api/v1/status
 
-Returns the state verified by the native backend.
-
-```json
-{
-  "state": "ready",
-  "mounted": false,
-  "protocol": null,
-  "endpoint": null,
-  "mountpoint": "/hostapp",
-  "last_result": "No operation yet",
-  "last_error": null
-}
-```
-
-The mounted value must reflect actual mount state, not just a successful TCP connection.
+Returns actual backend mount state, including `mounted`, `protocol`, `endpoint`, `mountpoint`, `last_result`, and `last_error`. A successful TCP connection alone must never be reported as a mount.
 
 ### POST /api/v1/mount
 
-Request:
+NFS request:
 
 ```json
 {
   "protocol": "nfs",
   "host": "192.168.1.10",
   "port": 2049,
-  "remote_path": "/mnt/tank/ps5",
+  "remote_path": "/mnt/dataPool/games",
   "mountpoint": "/hostapp",
   "username": "",
   "password": ""
 }
 ```
 
-The initial supported protocol target is NFS. SMB, FTP and SFTP must return an explicit unsupported response until their filesystem adapters are implemented. A remote directory browser alone is not a mount adapter.
-
-Success response (only after verifying the mount):
+SMB request:
 
 ```json
 {
-  "ok": true,
-  "mounted": true,
-  "protocol": "nfs",
-  "endpoint": "nfs://192.168.1.10:2049/mnt/tank/ps5",
+  "protocol": "smb",
+  "host": "192.168.1.10",
+  "port": 445,
+  "remote_path": "games/PS5",
   "mountpoint": "/hostapp",
-  "message": "NFS share mounted and verified."
+  "username": "nas-user",
+  "password": "secret"
 }
 ```
 
-Failure response:
+For NFS, `remote_path` must be the absolute export path. For SMB, it must be the share name, optionally followed by a subdirectory. Credentials are used only by the SMB adapter and are never returned by the API or logged by the payload.
 
-```json
-{
-  "ok": false,
-  "error": "mount_failed",
-  "message": "Human-readable reason"
-}
-```
+Both adapters are intended to be read-only. The backend validates the protocol, host, port, path, and mountpoint; rejects paths with traversal markers; and refuses to mount over non-empty `/hostapp`. Only one payload-owned share can be active at a time.
 
 ### POST /api/v1/unmount
-
-Request:
 
 ```json
 {"mountpoint": "/hostapp"}
 ```
 
-The backend must only unmount a mount created/owned by this payload. It must not blindly unmount arbitrary system mounts.
+Only the mount owned by this payload is eligible for disconnect. The backend must not blindly unmount unrelated system mounts.
 
 ## Security and reliability requirements
 
-- Validate protocol, host, port, path and mountpoint on the native side; never trust client-side validation.
-- Do not log passwords or return them in status responses.
-- Bound request body sizes and reject malformed JSON.
-- Prevent command injection: do not build shell commands from user-controlled strings.
-- Return actionable errors for unsupported protocol, DNS/network timeout, authentication failure, export/share denial, mountpoint conflict, and unmount failure.
-- Keep `/hostapp` unchanged until the mount implementation is confirmed safe for the target firmware.
+- No shell commands are built from user input.
+- Request bodies are bounded; malformed fields are rejected.
+- Passwords are not logged, echoed, or included in status.
+- Mount success is reported only after the native adapter creates the FUSE mount and starts its request loop.
+- The API binds to loopback by default and is not intended to be exposed to the public internet.
+- The FUSE/NFS/SMB adapters are not yet target-build or on-console verified.
