@@ -1,7 +1,18 @@
 # Implementation status
 
-The branch includes the native HTTP server, embedded UI, and a read-only NFS FUSE adapter. The Makefile enables FUSE by default; set `PS5NM_WITH_FUSE=0` to build the UI/API scaffold only.
+## In the development branch
 
-The adapter has not yet been compiled against the target SDK or tested on a PS5. The build combines the PS5 payload SDK with ORBISDEV libraries, so ABI compatibility must be proven. Do not treat NFS mounting as verified until firmware 13.60 tests confirm real file reads, permissions, unmount, and reconnect.
+- Native HTTP server and embedded browser UI.
+- API routes for mount, status, and unmount.
+- NFS read-only FUSE adapter using liborbisNfs/libnfs.
+- SMB2/SMB3 read-only FUSE adapter using libsmb2.
+- Single active share, strict `/hostapp` mountpoint, non-empty mountpoint protection, credential redaction, and bounded HTTP request bodies.
+- Build-time generation of `native/web_assets.hpp` from `web/index.html`.
 
-SMB, FTP, and SFTP filesystem mounts are not implemented. See `docs/BUILD.md` and `docs/NFS_TEST_PLAN.md`.
+## Not verified
+
+The project has not yet been compiled with the target PS5 SDK or tested on firmware 13.60. The build depends on patched PS5-compatible libfuse, liborbisNfs, and libsmb2 libraries under ORBISDEV. ABI and link compatibility remain unproven.
+
+The adapters must be tested on console for export/share access, file listing, metadata, file reads, large files, permissions, wrong credentials, server disconnect, unmount, and reconnect. The current code is an implementation attempt, not a verified release.
+
+FTP and SFTP are intentionally excluded. Do not tag or distribute a production release until build and hardware tests pass.
