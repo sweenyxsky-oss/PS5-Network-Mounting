@@ -1,19 +1,27 @@
 # Build setup
 
-The default target now enables the NFS FUSE adapter. It requires both the PS5 payload SDK (with `libmicrohttpd.a`) and an ORBISDEV SDK containing the PS5-compatible patched `libfuse.a` and `liborbisNfs.a`.
+The default build includes both read-only filesystem adapters. It requires:
+
+- PS5 payload SDK, including `toolchain/prospero.mk` and `target/lib/libmicrohttpd.a`
+- PS5-compatible patched libfuse, including `fuse_fw_supported()`
+- ORBISDEV `liborbisNfs`
+- ORBISDEV-compiled `libsmb2`
+- Compatible headers and static libraries under the ORBISDEV prefix
+
+Build:
 
 ```sh
 make PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk ORBISDEV=/path/to/orbisdev
 ```
 
-To build only the UI/API scaffold while the FUSE libraries are being prepared:
+Build only the native UI/API scaffold (no actual filesystem mounting):
 
 ```sh
 make PS5NM_WITH_FUSE=0 PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
 ```
 
-The optional FUSE adapter uses Itemzflow-compatible FUSE APIs and the ORBISDEV NFS client library. The build currently links libraries from two SDK installations; ABI compatibility must be checked by compiling and running on the target before treating the output as a release.
+The build checks for the expected headers and libraries before linking. If your ORBISDEV environment does not provide a PS5-compatible `libsmb2`, the SMB adapter cannot be considered buildable until that dependency is ported and installed. Do not substitute a desktop library binary.
 
-The payload defaults to HTTP port 18080 and binds to the console loopback address. Open `http://127.0.0.1:18080/` in the PS5 browser. It is not exposed to other LAN devices by default.
+The payload defaults to HTTP port 18080 and binds to console loopback. Open `http://127.0.0.1:18080/` in the PS5 browser. One share at a time can be mounted read-only at `/hostapp`.
 
-The NFS adapter is read-only. SMB, FTP, and SFTP are not mounted filesystems yet.
+The code has not yet been compiled against the actual target SDK or validated on a PS5. The build command is a documented build path, not a claim of successful compilation.
