@@ -12,7 +12,7 @@ ifndef ORBISDEV
 $(error Set ORBISDEV to an SDK with the PS5-compatible FUSE and NFS libraries installed)
 endif
 SRC += native/nfs_fuse.cpp
-CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
+CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
 LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lorbisNfs -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
 endif
 
