@@ -20,8 +20,6 @@
 #include <time.h>
 #include <unistd.h>
 
-extern "C" int fuse_fw_supported(void);
-
 namespace ps5nm {
 namespace {
 pthread_mutex_t g_smb_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -253,10 +251,6 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
         return false;
     }
     pthread_mutex_unlock(&g_smb_lock);
-    if (!fuse_fw_supported()) {
-        if (error) *error = "The installed FUSE layer reports that this firmware is unsupported.";
-        return false;
-    }
     struct stat mountpoint_stat{};
     if (lstat(mountpoint.c_str(), &mountpoint_stat) != 0 || !S_ISDIR(mountpoint_stat.st_mode)) {
         if (error) *error = "The /hostapp mountpoint must be an existing real directory, not a symlink.";
