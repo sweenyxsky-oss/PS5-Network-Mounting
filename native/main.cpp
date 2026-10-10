@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <new>
+#include <unistd.h>
 #include <string>
 
 #include "mount_backend.hpp"
