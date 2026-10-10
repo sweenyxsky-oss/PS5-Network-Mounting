@@ -33,13 +33,21 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
         status_.last_result = "Mount rejected";
         return false;
     }
-    if (status_.mounted || (status_.protocol == "nfs" && NfsFuseIsMounted()) ||
+    if (status_.mounted) {
+        if (error) *error = "A network share is already mounted. Disconnect it before connecting another share.";
+        status_.last_error = error ? *error : "Another share is mounted.";
+        status_.last_result = "Mount rejected";
+        return false;
+    }
+#ifdef PS5NM_WITH_FUSE
+    if ((status_.protocol == "nfs" && NfsFuseIsMounted()) ||
         (status_.protocol == "smb" && SmbFuseIsMounted())) {
         if (error) *error = "A network share is already mounted. Disconnect it before connecting another share.";
         status_.last_error = error ? *error : "Another share is mounted.";
         status_.last_result = "Mount rejected";
         return false;
     }
+#endif
     if (mountpoint != "/hostapp") {
         if (error) *error = "For safety, this payload only manages /hostapp.";
         status_.last_error = error ? *error : "Unsafe mountpoint.";
