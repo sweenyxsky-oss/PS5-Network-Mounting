@@ -8,7 +8,16 @@ The default build includes both read-only filesystem adapters. It requires:
 - ORBISDEV-compiled `libsmb2`, plus `libssl`, `libcrypto`, and `libz`
 - Compatible headers and static libraries under the ORBISDEV prefix
 
-Build:
+Build (recommended helper):
+
+```sh
+export PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
+export ORBISDEV=/path/to/orbisdev
+export ITEMZFLOW_ROOT=/path/to/Itemzflow
+bash scripts/build_ps5.sh
+```
+
+Equivalent direct Make invocation:
 
 ```sh
 make PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk ORBISDEV=/path/to/orbisdev ITEMZFLOW_ROOT=/path/to/Itemzflow
