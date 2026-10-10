@@ -89,8 +89,9 @@ jobs:
           EOF
           CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -D_REENTRANT -DFUSE_USE_VERSION=26 -DHAVE_CONFIG_H -D__ORBIS__=1 -D_ORBIS_ -D__FreeBSD__=9 -I/tmp/ps5-fuse-compat -I$INC -I$ITEMZFLOW_ROOT/itemz-daemon/include/fuse -I$ITEMZFLOW_ROOT/itemz-daemon/include -I$ORBISDEV/include -I$ORBISDEV/include/orbis -I$PS5_PAYLOAD_SDK/target/include"
           # This PS5 integration uses the core single-threaded FUSE loop. The
-          # optional subdir module and mount helper are not linked by the app.
-          SOURCES="fuse.c fuse_kern_chan.c fuse_loop.c fuse_lowlevel.c fuse_opt.c fuse_session.c fuse_signals.c cuse_lowlevel.c helper.c ulockmgr.c"
+          # optional subdir module is excluded; mount_bsd.c provides the required
+          # fuse_kern_mount implementation for PS5 /dev/fuse.
+          SOURCES="fuse.c fuse_kern_chan.c fuse_loop.c fuse_lowlevel.c fuse_opt.c fuse_session.c fuse_signals.c cuse_lowlevel.c helper.c ulockmgr.c mount_bsd.c"
           for source in $SOURCES; do
             object="/tmp/ps5-fuse-obj/${source//\//_}.o"
             "$CC" $CFLAGS -c "$SRC/$source" -o "$object"
