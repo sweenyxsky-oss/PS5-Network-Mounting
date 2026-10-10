@@ -9,7 +9,7 @@ LDFLAGS_PS5 := $(PS5_PAYLOAD_SDK)/target/lib/libmicrohttpd.a -L$(PS5_PAYLOAD_SDK
 PS5NM_WITH_FUSE ?= 1
 ifeq ($(PS5NM_WITH_FUSE),1)
 ifndef ORBISDEV
-$(error Set ORBISDEV to an SDK with the PS5-compatible FUSE and NFS libraries installed)
+$(error Set ORBISDEV to an SDK with PS5-compatible libfuse, liborbisNfs, and libsmb2 installed)
 endif
 SRC += native/nfs_fuse.cpp native/smb_fuse.cpp
 CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
@@ -25,6 +25,14 @@ all: check-sdk $(TARGET)
 check-sdk:
 	@test -f "$(PS5_PAYLOAD_SDK)/toolchain/prospero.mk" || (echo "PS5 SDK toolchain not found"; exit 1)
 	@test -f "$(PS5_PAYLOAD_SDK)/target/lib/libmicrohttpd.a" || (echo "libmicrohttpd.a missing"; exit 1)
+ifeq ($(PS5NM_WITH_FUSE),1)
+	@test -f "$(ORBISDEV)/usr/include/fuse/fuse.h" || (echo "ORBISDEV FUSE headers missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/include/orbisNfs.h" || (echo "ORBISDEV liborbisNfs headers missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/include/smb2/libsmb2.h" || (echo "ORBISDEV libsmb2 headers missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/lib/libfuse.a" || (echo "ORBISDEV libfuse.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/lib/liborbisNfs.a" || (echo "ORBISDEV liborbisNfs.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/lib/libsmb2.a" || (echo "ORBISDEV libsmb2.a missing"; exit 1)
+endif
 native/web_assets.hpp: web/index.html tools/embed_ui.py
 	python3 tools/embed_ui.py $< $@
 
