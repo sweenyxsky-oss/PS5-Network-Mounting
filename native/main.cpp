@@ -1,4 +1,6 @@
 #include <microhttpd.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #include <algorithm>
 #include <cctype>
@@ -185,12 +187,15 @@ int main() {
         if (end != env && *end == '\0' && value >= 1024 && value <= 65535)
             port = static_cast<unsigned int>(value);
     }
-    // The UI is intended for the PS5 browser / LAN clients, so listen on all
-    // interfaces. Restrict access at the network edge; this API must not be
-    // exposed to the public internet.
+    // Bind only to the console loopback interface; the UI is opened locally.
+    sockaddr_in bind_addr{};
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(static_cast<uint16_t>(port));
+    bind_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     MHD_Daemon* daemon = MHD_start_daemon(
         MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG,
         static_cast<uint16_t>(port), nullptr, nullptr, &Access, nullptr,
+        MHD_OPTION_SOCK_ADDR, static_cast<const sockaddr*>(static_cast<void*>(&bind_addr)),
         MHD_OPTION_NOTIFY_COMPLETED, &Completed, nullptr,
         MHD_OPTION_CONNECTION_TIMEOUT, static_cast<unsigned int>(15),
         MHD_OPTION_THREAD_POOL_SIZE, static_cast<unsigned int>(4),
