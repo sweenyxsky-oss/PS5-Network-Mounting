@@ -1,0 +1,96 @@
+name: PS5 full NFS and SMB payload build
+
+on:
+  push:
+    branches:
+      - chore/full-nfs-smb-ci-build
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ps5-full-mount-{ github.ref }
+  cancel-in-progress: false
+
+jobs:
+  build-full-payload:
+    name: Build PS5 payload with NFS and SMB adapters
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+      ORBISDEV: /opt/ps5-payload-sdk/target/user/homebrew
+      ITEMZFLOW_ROOT: /tmp/Itemzflow
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Install PS5 library build host dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config meson clang-18 lld-18 llvm-18-dev libclang-18-dev libclang-cpp18-dev libclc-18-dev libllvmspirvlib-18-dev build-essential autoconf libtool yasm nasm bison flex smpq gperf pkgconf libarchive-tools autopoint po4a git curl doxygen makepkg pacman-package-manager python3-mako python3-glad spirv-tools glslang-tools python3-packaging unzip
+          sudo python3 -m pip install --break-system-packages 'meson>=1.4.0'
+
+      - name: Build PS5 SDK and target libraries
+        run: |
+          set -eux
+          git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo.git /tmp/pacbrew-repo
+          cd /tmp/pacbrew-repo
+          # Upstream CI builds the SDK and cross-compiled library packages into /opt/ps5-payload-sdk.
+          bash ci-libs.sh
+          test -f "$PS5_PAYLOAD_SDK/toolchain/prospero.mk"
+          find "$ORBISDEV/usr/include" -maxdepth 3 \( -path '*/nfsc/libnfs.h' -o -path '*/smb2/libsmb2.h' \) -print
+          test -f "$ORBISDEV/usr/include/nfsc/libnfs.h"
+          test -f "$ORBISDEV/usr/include/smb2/libsmb2.h"
+          test -f "$ORBISDEV/usr/lib/libnfs.a"
+          test -f "$ORBISDEV/usr/lib/libsmb2.a"
+          test -f "$ORBISDEV/usr/lib/libssl.a"
+          test -f "$ORBISDEV/usr/lib/libcrypto.a"
+          test -f "$ORBISDEV/usr/lib/libz.a"
+
+      - name: Fetch Itemzflow FUSE compatibility source
+        run: |
+          set -eux
+          git clone --depth 1 https://github.com/LightningMods/Itemzflow.git "$ITEMZFLOW_ROOT"
+          test -f "$ITEMZFLOW_ROOT/itemz-daemon/include/fuse/fuse.h"
+          test -f "$ITEMZFLOW_ROOT/external/libfuse/source/fuse.c"
+
+      - name: Compile Itemzflow FUSE library with PS5 compiler
+        run: |
+          set -eux
+          SRC="$ITEMZFLOW_ROOT/external/libfuse/source"
+          INC="$ITEMZFLOW_ROOT/external/libfuse/include"
+          mkdir -p /tmp/ps5-fuse-obj "$ORBISDEV/usr/lib"
+          CC="$PS5_PAYLOAD_SDK/bin/prospero-clang"
+          AR="$PS5_PAYLOAD_SDK/bin/prospero-ar"
+          CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -D_REENTRANT -DFUSE_USE_VERSION=26 -DHAVE_CONFIG_H -D__ORBIS__=1 -D_ORBIS_ -D__FreeBSD__=9 -I$INC -I$ITEMZFLOW_ROOT/itemz-daemon/include/fuse -I$ITEMZFLOW_ROOT/itemz-daemon/include -I$ORBISDEV/usr/include -I$ORBISDEV/usr/include/orbis"
+          SOURCES="fuse.c fuse_kern_chan.c fuse_loop.c fuse_loop_mt.c fuse_lowlevel.c fuse_mt.c fuse_opt.c fuse_session.c fuse_signals.c cuse_lowlevel.c helper.c ulockmgr.c modules/subdir.c mount_bsd.c"
+          for source in $SOURCES; do
+            object="/tmp/ps5-fuse-obj/${source//\//_}.o"
+            "$CC" $CFLAGS -c "$SRC/$source" -o "$object"
+          done
+          "$AR" rcs "$ORBISDEV/usr/lib/libfuse.a" /tmp/ps5-fuse-obj/*.o
+          test -s "$ORBISDEV/usr/lib/libfuse.a"
+          ls -lh "$ORBISDEV/usr/lib/libfuse.a"
+
+      - name: Build full payload with NFS and SMB enabled
+        run: |
+          set -eux
+          make clean PS5NM_WITH_FUSE=1 PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" ITEMZFLOW_ROOT="$ITEMZFLOW_ROOT"
+          make PS5NM_WITH_FUSE=1 PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" ITEMZFLOW_ROOT="$ITEMZFLOW_ROOT" V=1
+          test -s build/PS5NetworkMounting.elf
+          file build/PS5NetworkMounting.elf
+          "$PS5_PAYLOAD_SDK/bin/prospero-readelf" -h build/PS5NetworkMounting.elf || readelf -h build/PS5NetworkMounting.elf
+          sha256sum build/PS5NetworkMounting.elf
+
+      - name: Upload PS5 ELF and dependency manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS5NetworkMounting-full-NFS-SMB-ELF
+          path: |
+            build/PS5NetworkMounting.elf
+          if-no-files-found: error
+          retention-days: 14
