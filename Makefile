@@ -20,11 +20,16 @@ ifdef PS5_PAYLOAD_SDK
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-.PHONY: all clean check-sdk
+.PHONY: all clean check-sdk embed-ui
 all: check-sdk $(TARGET)
 check-sdk:
 	@test -f "$(PS5_PAYLOAD_SDK)/toolchain/prospero.mk" || (echo "PS5 SDK toolchain not found"; exit 1)
 	@test -f "$(PS5_PAYLOAD_SDK)/target/lib/libmicrohttpd.a" || (echo "libmicrohttpd.a missing"; exit 1)
+native/web_assets.hpp: web/index.html tools/embed_ui.py
+	python3 tools/embed_ui.py $< $@
+
+embed-ui: native/web_assets.hpp
+
 $(TARGET): $(SRC) native/mount_backend.hpp native/web_assets.hpp native/nfs_fuse.hpp native/smb_fuse.hpp
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS_PS5) $(INCLUDES) $(SRC) -o $@ $(LDFLAGS_PS5)
