@@ -28,7 +28,6 @@ all: $(TARGET)
 
 check-sdk:
 	@test -f "$(PS5_PAYLOAD_SDK)/toolchain/prospero.mk" || (echo "PS5 SDK toolchain not found"; exit 1)
-	@test -f "$(PS5_PAYLOAD_SDK)/target/lib/libmicrohttpd.a" || (echo "libmicrohttpd.a missing"; exit 1)
 
 check-fuse-sdk:
 	@test -f "$(ORBISDEV)/usr/include/fuse/fuse.h" || (echo "ORBISDEV FUSE headers missing"; exit 1)
