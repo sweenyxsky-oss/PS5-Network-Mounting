@@ -18,8 +18,6 @@
 #include <unistd.h>
 #include <vector>
 
-extern "C" int fuse_fw_supported(void);
-
 namespace ps5nm {
 namespace {
 pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -217,10 +215,6 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
     pthread_mutex_unlock(&g_lock);
-    if (!fuse_fw_supported()) {
-        if (error) *error = "The installed FUSE layer reports that this firmware is unsupported.";
-        return false;
-    }
     struct stat existing{};
     if (lstat(mountpoint.c_str(), &existing) != 0 || !S_ISDIR(existing.st_mode)) {
         if (error) *error = "The /hostapp directory does not exist or is not a directory; no files were changed.";
