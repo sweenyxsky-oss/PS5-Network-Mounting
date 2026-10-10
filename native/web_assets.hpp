@@ -1,5 +1,6 @@
 #pragma once
-namespace ps5nm { inline constexpr char kIndexHtml[] = R"PS5NMHTML(<!doctype html>
+namespace ps5nm {
+inline constexpr char kIndexHtml[] = R"PS5NMHTML(<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -126,4 +127,5 @@ footer{max-width:1100px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
 })();
 </script>
 </body>
-</html>)PS5NMHTML"; }
+</html>)PS5NMHTML";
+}
