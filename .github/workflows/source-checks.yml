@@ -25,6 +25,24 @@ jobs:
           g++ -std=c++17 -O2 -Wall -Wextra -Inative native/main.cpp native/mount_backend.cpp tests/net_stubs.cpp -pthread -o /tmp/ps5nm-host
       - name: Test HTTP API behavior
         run: python tests/http_smoke.py
+      - uses: actions/checkout@v4
+        with:
+          repository: sweenyxsky-oss/Itemzflow
+          ref: main
+          path: deps/Itemzflow
+      - uses: actions/checkout@v4
+        with:
+          repository: sweenyxsky-oss/libnfs
+          ref: master
+          path: deps/libnfs
+      - uses: actions/checkout@v4
+        with:
+          repository: sahlberg/libsmb2
+          ref: master
+          path: deps/libsmb2
+      - name: Syntax-check NFS and SMB FUSE adapters against upstream headers
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -fsyntax-only -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -Inative -Ideps/Itemzflow/itemz-daemon/include -Ideps/libnfs/include -Ideps/libsmb2/include native/nfs_fuse.cpp native/smb_fuse.cpp
       - name: Check protocol scope
         run: |
           grep -q 'value="nfs"' web/index.html
