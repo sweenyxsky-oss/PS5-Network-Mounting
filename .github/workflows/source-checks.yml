@@ -20,6 +20,11 @@ jobs:
         run: |
           python tools/embed_ui.py web/index.html /tmp/web_assets.hpp
           cmp native/web_assets.hpp /tmp/web_assets.hpp
+      - name: Compile host API smoke-test binary
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -DPS5NM_WITH_FUSE=0 -Inative native/main.cpp native/mount_backend.cpp tests/net_stubs.cpp -pthread -o /tmp/ps5nm-host
+      - name: Test HTTP API behavior
+        run: python tests/http_smoke.py
       - name: Check protocol scope
         run: |
           grep -q 'value="nfs"' web/index.html
