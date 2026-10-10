@@ -40,6 +40,9 @@ check-fuse-sdk:
 	@test -f "$(ORBISDEV)/usr/lib/libfuse.a" || (echo "ORBISDEV libfuse.a missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/libnfs.a" || (echo "ORBISDEV libnfs.a missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/libsmb2.a" || (echo "ORBISDEV libsmb2.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/lib/libcrypto.a" || (echo "ORBISDEV libcrypto.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/lib/libssl.a" || (echo "ORBISDEV libssl.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/lib/libz.a" || (echo "ORBISDEV libz.a missing"; exit 1)
 
 native/web_assets.hpp: web/index.html tools/embed_ui.py
 	python3 tools/embed_ui.py $< $@
