@@ -160,10 +160,17 @@ MHD_Result Access(void*, MHD_Connection* conn, const char* url, const char* meth
         if (host.empty() || host.size() > 253 ||
             host.find_first_of(" /\\\r\n\t") != std::string::npos)
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_host", "Enter a hostname or IP address only.");
-        if (remote.empty() || remote.front() != '/' || remote.find("..") != std::string::npos ||
-            remote.size() > 1024)
+        if (remote.empty() || remote.size() > 1024 ||
+            remote.find("..") != std::string::npos ||
+            remote.find_first_of("\\r\\n?#") != std::string::npos)
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_remote_path",
-                            "Remote export path must be an absolute path without '..'.");
+                            "Remote path is empty, too long, or contains unsafe characters.");
+        if (protocol == "nfs" && remote.front() != '/')
+            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_remote_path",
+                            "NFS requires an absolute export path, for example /mnt/dataPool/games.");
+        if (protocol == "smb" && remote.front() == '/')
+            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_remote_path",
+                            "SMB path must be ShareName or ShareName/subfolder without a leading slash.");
         if (mountpoint != "/hostapp")
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "unsafe_mountpoint",
                             "For safety, the only allowed mountpoint is /hostapp.");
