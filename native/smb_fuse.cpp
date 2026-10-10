@@ -28,6 +28,14 @@ int fuse_mount_compat25(const char*, struct fuse_args*, const struct fuse_operat
 
 namespace ps5nm {
 namespace {
+int UnmountFuseMount(const char* mountpoint) {
+#if defined(__ORBIS__)
+    return unmount(mountpoint, MNT_FORCE);
+#else
+    return umount(mountpoint);
+#endif
+}
+
 pthread_mutex_t g_smb_lock = PTHREAD_MUTEX_INITIALIZER;
 struct smb2_context* g_smb = nullptr;
 struct fuse_chan* g_smb_channel = nullptr;
@@ -316,7 +324,10 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     struct fuse_args args = FUSE_ARGS_INIT(6, argv);
     const int fuse_fd = fuse_mount_compat25(mountpoint.c_str(), &args, &g_smb_ops);
     g_smb_channel = fuse_fd >= 0 ? fuse_kern_chan_new(fuse_fd) : nullptr;
-    if (!g_smb_channel && fuse_fd >= 0) close(fuse_fd);
+    if (!g_smb_channel && fuse_fd >= 0) {
+        close(fuse_fd);
+        (void)UnmountFuseMount(mountpoint.c_str());
+    }
     if (!g_smb_channel) {
         if (error) *error = "FUSE could not attach to /hostapp. Check firmware support and whether another mount owns that path.";
         fuse_opt_free_args(&args);
@@ -327,7 +338,7 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     fuse_opt_free_args(&args);
     if (!g_smb_fuse) {
         if (error) *error = "FUSE attached the channel but could not initialize SMB filesystem operations.";
-        (void)unmount(mountpoint.c_str(), MNT_FORCE);
+        (void)UnmountFuseMount(mountpoint.c_str());
         fuse_unmount(mountpoint.c_str(), g_smb_channel);
         g_smb_channel = nullptr;
         CleanupSmb();
@@ -340,6 +351,7 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     pthread_mutex_unlock(&g_smb_lock);
     if (pthread_create(&g_smb_thread, nullptr, SmbLoop, nullptr) != 0) {
         if (error) *error = "Could not start the SMB FUSE request loop.";
+        (void)UnmountFuseMount(mountpoint.c_str());
         fuse_unmount(mountpoint.c_str(), g_smb_channel);
         fuse_destroy(g_smb_fuse);
         g_smb_fuse = nullptr;
@@ -387,7 +399,7 @@ bool StopSmbFuse(const std::string& mountpoint, std::string* error) {
         return false;
     }
     pthread_mutex_unlock(&g_smb_lock);
-    if (unmount(mountpoint.c_str(), MNT_FORCE) != 0) {
+    if (UnmountFuseMount(mountpoint.c_str()) != 0) {
         if (error) *error = std::string("Kernel FUSE unmount failed: ") + std::strerror(errno);
         return false;
     }
