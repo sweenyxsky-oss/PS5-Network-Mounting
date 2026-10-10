@@ -71,7 +71,7 @@ jobs:
           mkdir -p /tmp/ps5-fuse-obj "$ORBISDEV/lib"
           CC="$PS5_PAYLOAD_SDK/bin/prospero-clang"
           AR="$PS5_PAYLOAD_SDK/bin/prospero-ar"
-          CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -D_REENTRANT -DFUSE_USE_VERSION=26 -DHAVE_CONFIG_H -D__ORBIS__=1 -D_ORBIS_ -D__FreeBSD__=9 -I$INC -I$ITEMZFLOW_ROOT/itemz-daemon/include/fuse -I$ITEMZFLOW_ROOT/itemz-daemon/include -I$ORBISDEV/include -I$ORBISDEV/include/orbis"
+          CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64 -D_REENTRANT -DFUSE_USE_VERSION=26 -DHAVE_CONFIG_H -D__ORBIS__=1 -D_ORBIS_ -D__FreeBSD__=9 -I$INC -I$ITEMZFLOW_ROOT/itemz-daemon/include/fuse -I$ITEMZFLOW_ROOT/itemz-daemon/include -I$ORBISDEV/include -I$ORBISDEV/include/orbis -I$PS5_PAYLOAD_SDK/target/include"
           SOURCES="fuse.c fuse_kern_chan.c fuse_loop.c fuse_loop_mt.c fuse_lowlevel.c fuse_mt.c fuse_opt.c fuse_session.c fuse_signals.c cuse_lowlevel.c helper.c ulockmgr.c modules/subdir.c mount_bsd.c"
           for source in $SOURCES; do
             object="/tmp/ps5-fuse-obj/${source//\//_}.o"
