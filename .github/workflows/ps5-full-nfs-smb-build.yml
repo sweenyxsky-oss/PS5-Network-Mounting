@@ -68,7 +68,7 @@ jobs:
           set -eux
           SRC="$ITEMZFLOW_ROOT/external/libfuse/source"
           INC="$ITEMZFLOW_ROOT/external/libfuse/include"
-          mkdir -p /tmp/ps5-fuse-obj "$ORBISDEV/lib"
+          mkdir -p /tmp/ps5-fuse-obj
           CC="$PS5_PAYLOAD_SDK/bin/prospero-clang"
           AR="$PS5_PAYLOAD_SDK/bin/prospero-ar"
           # Itemzflow's optional module loader includes this PS4 header, which the
@@ -95,7 +95,8 @@ jobs:
             object="/tmp/ps5-fuse-obj/${source//\//_}.o"
             "$CC" $CFLAGS -c "$SRC/$source" -o "$object"
           done
-          "$AR" rcs "$ORBISDEV/lib/libfuse.a" /tmp/ps5-fuse-obj/*.o
+          "$AR" rcs /tmp/libfuse.a /tmp/ps5-fuse-obj/*.o
+          sudo install -m 0644 /tmp/libfuse.a "$ORBISDEV/lib/libfuse.a"
           test -s "$ORBISDEV/lib/libfuse.a"
           ls -lh "$ORBISDEV/lib/libfuse.a"
 
