@@ -30,6 +30,7 @@ pthread_t g_loop_thread{};
 bool g_thread_started = false;
 bool g_loop_alive = false;
 bool g_mounted = false;
+bool g_nfs_connected = false;
 std::string g_mountpoint;
 std::string g_last_error;
 
@@ -183,6 +184,8 @@ void* FuseLoop(void*) {
     return nullptr;
 }
 void CleanupNfs() {
+    if (g_nfs && g_nfs_connected) (void)nfs_umount(g_nfs);
+    g_nfs_connected = false;
     if (g_url) { nfs_destroy_url(g_url); g_url = nullptr; }
     if (g_nfs) { nfs_destroy_context(g_nfs); g_nfs = nullptr; }
 }
@@ -235,6 +238,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         CleanupNfs();
         return false;
     }
+    g_nfs_connected = true;
 
     g_ops.getattr = FsGetattr;
     g_ops.readlink = FsReadlink;
