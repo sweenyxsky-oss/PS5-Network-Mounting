@@ -257,6 +257,11 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
         if (error) *error = "The installed FUSE layer reports that this firmware is unsupported.";
         return false;
     }
+    struct stat mountpoint_stat{};
+    if (lstat(mountpoint.c_str(), &mountpoint_stat) != 0 || !S_ISDIR(mountpoint_stat.st_mode)) {
+        if (error) *error = "The /hostapp mountpoint must be an existing real directory, not a symlink.";
+        return false;
+    }
     if (!MountpointIsEmpty(mountpoint, error)) return false;
 
     std::string url_text = "smb://" + host + ":" + std::to_string(port) + "/" + share_and_path;
