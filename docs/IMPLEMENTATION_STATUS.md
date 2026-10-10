@@ -4,7 +4,7 @@
 
 - Native HTTP server and embedded browser UI.
 - API routes for mount, status, and unmount.
-- NFS read-only FUSE adapter using libnfs/libnfs.
+- NFS read-only FUSE adapter using libnfs.
 - SMB2/SMB3 read-only FUSE adapter using libsmb2.
 - Single active share, strict `/hostapp` mountpoint, non-empty mountpoint protection, credential redaction, and bounded HTTP request bodies.
 - Build-time generation of `native/web_assets.hpp` from `web/index.html`.
