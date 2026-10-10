@@ -222,7 +222,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
     struct stat existing{};
-    if (stat(mountpoint.c_str(), &existing) != 0 || !S_ISDIR(existing.st_mode)) {
+    if (lstat(mountpoint.c_str(), &existing) != 0 || !S_ISDIR(existing.st_mode)) {
         if (error) *error = "The /hostapp directory does not exist or is not a directory; no files were changed.";
         return false;
     }
