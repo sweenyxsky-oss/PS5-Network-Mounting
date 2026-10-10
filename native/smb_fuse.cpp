@@ -28,6 +28,7 @@ pthread_t g_smb_thread{};
 bool g_smb_thread_started = false;
 bool g_smb_loop_alive = false;
 bool g_smb_mounted = false;
+bool g_smb_connected = false;
 std::string g_smb_mountpoint;
 std::string g_smb_root;
 std::string g_smb_error;
@@ -117,13 +118,18 @@ int SmbOpen(const char* path, struct fuse_file_info* fi) {
     const std::string remote = RemotePath(path);
     pthread_mutex_lock(&g_smb_lock);
     struct smb2fh* fh = smb2_open(g_smb, remote.c_str(), O_RDONLY);
-    const char* err = fh ? nullptr : smb2_get_error(g_smb);
-    if (fh) fi->fh = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fh));
-    pthread_mutex_unlock(&g_smb_lock);
+    int mapped_error = EIO;
     if (!fh) {
-        (void)err;
-        return -EACCES;
+        const int nt_error = smb2_get_nterror(g_smb);
+        if (nt_error) {
+            const int candidate = nterror_to_errno(static_cast<uint32_t>(nt_error));
+            if (candidate > 0) mapped_error = candidate;
+        }
+    } else {
+        fi->fh = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fh));
     }
+    pthread_mutex_unlock(&g_smb_lock);
+    if (!fh) return -mapped_error;
     return 0;
 }
 
@@ -132,10 +138,13 @@ int SmbRead(const char*, char* buf, size_t size, off_t offset, struct fuse_file_
     auto* fh = reinterpret_cast<struct smb2fh*>(static_cast<uintptr_t>(fi->fh));
     if (!fh) return -EBADF;
     pthread_mutex_lock(&g_smb_lock);
-    int rc = smb2_pread(g_smb, fh, reinterpret_cast<uint8_t*>(buf),
+    int rc;
+    do {
+        rc = smb2_pread(g_smb, fh, reinterpret_cast<uint8_t*>(buf),
                         static_cast<uint32_t>(size), static_cast<uint64_t>(offset));
+    } while (rc == -EAGAIN);
     pthread_mutex_unlock(&g_smb_lock);
-    return rc == -EAGAIN ? 0 : rc;
+    return rc;
 }
 
 int SmbRelease(const char*, struct fuse_file_info* fi) {
@@ -202,10 +211,11 @@ bool MountpointIsEmpty(const std::string& mountpoint, std::string* error) {
 
 void CleanupSmb() {
     if (g_smb) {
-        (void)smb2_disconnect_share(g_smb);
+        if (g_smb_connected) (void)smb2_disconnect_share(g_smb);
         smb2_destroy_context(g_smb);
         g_smb = nullptr;
     }
+    g_smb_connected = false;
     g_smb_root.clear();
 }
 }
@@ -246,8 +256,8 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     }
     smb2_set_timeout(g_smb, 12);
     smb2_set_security_mode(g_smb, SMB2_NEGOTIATE_SIGNING_ENABLED);
-    if (!username.empty()) smb2_set_user(g_smb, username.c_str());
-    if (!password.empty()) smb2_set_password(g_smb, password.c_str());
+    smb2_set_user(g_smb, username.empty() ? "guest" : username.c_str());
+    smb2_set_password(g_smb, password.c_str());
     struct smb2_url* url = smb2_parse_url(g_smb, url_text.c_str());
     if (!url || !url->server || !url->share) {
         if (error) *error = std::string("Invalid SMB share URL: ") + smb2_get_error(g_smb);
@@ -255,15 +265,17 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
         CleanupSmb();
         return false;
     }
-    const std::string root = url->path ? url->path : "";
+    std::string root = url->path ? url->path : "";
+    while (!root.empty() && root.front() == '/') root.erase(root.begin());
     if (smb2_connect_share(g_smb, url->server, url->share,
-                           username.empty() ? nullptr : username.c_str()) != 0) {
+                           username.empty() ? "guest" : username.c_str()) != 0) {
         if (error) *error = std::string("SMB connection or authentication failed: ") + smb2_get_error(g_smb);
         smb2_destroy_url(url);
         CleanupSmb();
         return false;
     }
     smb2_destroy_url(url);
+    g_smb_connected = true;
     g_smb_root = root;
     g_smb_ops.getattr = SmbGetattr;
     g_smb_ops.readdir = SmbReaddir;
