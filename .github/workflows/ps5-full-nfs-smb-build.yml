@@ -79,6 +79,7 @@ jobs:
           #pragma once
           #include <stddef.h>
           #include <stdint.h>
+          #include <sys/types.h>
           typedef int32_t SceKernelModule;
           SceKernelModule sceKernelLoadStartModule(const char*, size_t, const void*, uint32_t, const void*, int32_t*);
           int32_t sceKernelStopUnloadModule(SceKernelModule, size_t, const void*, uint32_t, const void*, int32_t*);
