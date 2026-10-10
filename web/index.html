@@ -29,12 +29,12 @@ footer{max-width:1100px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
 </style>
 </head>
 <body>
-<header><div class="brand"><div class="logo">N</div><div><h1>PS5 Network Mounting</h1><p>Network shares · Local filesystem mounts · Payload control panel</p></div></div></header>
+<header><div class="brand"><div class="logo">N</div><div><h1>PS5 Network Mounting</h1><p>NFS + SMB · Read-only local filesystem mounts · Payload control panel</p></div></div></header>
 <main>
 <section class="panel">
 <h2>New connection</h2><p class="sub">Configure a remote share. Credentials are sent only to this payload's API when you connect.</p>
 <form id="connectForm">
-<div class="field"><label for="protocol">Protocol</label><select id="protocol" name="protocol"><option value="nfs">NFS — filesystem mount (first target)</option><option value="smb">SMB / Windows share</option><option value="ftp">FTP</option><option value="sftp">SFTP</option></select><div class="hint" id="protocolHint">NFS is the first implementation target. Mount support is not confirmed until the native backend succeeds.</div></div>
+<div class="field"><label for="protocol">Protocol</label><select id="protocol" name="protocol"><option value="nfs">NFS share</option><option value="smb">SMB / Windows share</option></select><div class="hint" id="protocolHint">NFS is the first implementation target. Mount support is not confirmed until the native backend succeeds.</div></div>
 <div class="two">
 <div class="field"><label for="host">Server IP / hostname</label><input id="host" name="host" placeholder="192.168.1.10" autocomplete="off" required></div>
 <div class="field"><label for="port">Port</label><input id="port" name="port" type="number" min="1" max="65535" placeholder="2049"></div>
@@ -63,25 +63,23 @@ footer{max-width:1100px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
 <div class="warning">Safety note: do not mount over an in-use system path. The native backend must verify mountpoint state and must not report success merely because a remote server is reachable.</div>
 </aside>
 </main>
-<footer>PS5 Network Mounting · Development UI · A successful HTTP response is not proof of a working filesystem mount.</footer>
+<footer>PS5 Network Mounting · NFS and SMB only · Shares mount read-only at /hostapp.</footer>
 <script>
 (() => {
  const $ = id => document.getElementById(id);
  const form = $('connectForm'), protocol = $('protocol');
- const defaultPorts = {nfs:2049,smb:445,ftp:21,sftp:22};
+ const defaultPorts = {nfs:2049,smb:445};
  const descriptions = {
-  nfs:['NFS export path','/mnt/tank/ps5','Enter the exported path exactly as configured on the NFS server.','NFS is the first implementation target. Mount support is not confirmed until the native backend succeeds.'],
-  smb:['Share name / subpath','games','Enter the SMB share name, optionally followed by a subpath.','SMB browsing support does not automatically provide filesystem-mount support.'],
-  ftp:['Remote directory','/','Enter a remote directory. FTP will need a filesystem bridge to appear as a local mount.','FTP is not a native mountable filesystem; it requires a compatible adapter.'],
-  sftp:['Remote directory','/','Enter a remote directory. SFTP will need a filesystem bridge to appear as a local mount.','SFTP is not a native mountable filesystem; it requires a compatible adapter.']
- };
+  nfs:['NFS export path','/mnt/dataPool/games','Enter the exact absolute path of the exported dataset on TrueNAS.','NFS mounts read-only at /hostapp. Use the export path configured in TrueNAS.'],
+  smb:['Share name / subpath','games','Enter the SMB share name, optionally followed by a subpath, e.g. games/PS5.','SMB mounts read-only at /hostapp. Use the SMB share name, not the TrueNAS filesystem path.']
+  };
  function setNotice(message, kind='info'){const n=$('notice');n.textContent=message;n.className='notice show '+kind}
  function updateProtocol(){
   const p=protocol.value, d=descriptions[p];
   $('pathLabel').textContent=d[0]; $('remotePath').placeholder=d[1]; $('pathHint').textContent=d[2]; $('protocolHint').textContent=d[3];
   $('port').value=defaultPorts[p]; $('credentials').hidden=(p==='nfs');
-  $('username').required=(p==='smb'||p==='ftp'||p==='sftp');
-  $('password').required=(p==='smb'||p==='ftp'||p==='sftp');
+  $('username').required=false;
+  $('password').required=false;
  }
  function endpoint(){
   const p=protocol.value,h=$('host').value.trim(),port=$('port').value;
@@ -91,7 +89,7 @@ footer{max-width:1100px;margin:0 auto;padding:0 18px 28px;color:var(--muted);fon
   const response=await fetch('/api/v1'+path,{cache:'no-store',...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
   const raw=await response.text(); let data={};
   try{data=raw?JSON.parse(raw):{}}catch{data={message:raw||response.statusText}}
-  if(!response.ok) throw new Error(data.error||data.message||('HTTP '+response.status));
+  if(!response.ok) throw new Error(data.message||data.error||('HTTP '+response.status));
   return data;
  }
  function applyStatus(data){
