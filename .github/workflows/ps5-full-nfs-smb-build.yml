@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ps5-full-mount-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-full-payload:
