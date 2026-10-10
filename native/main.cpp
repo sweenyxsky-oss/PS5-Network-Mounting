@@ -8,6 +8,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <pthread.h>
 #include <unistd.h>
 #include <string>
 
@@ -18,6 +19,7 @@ namespace {
 constexpr unsigned short kDefaultPort = 18080;
 constexpr size_t kMaxBody = 16 * 1024;
 ps5nm::MountBackend g_mount;
+pthread_mutex_t g_mount_api_lock = PTHREAD_MUTEX_INITIALIZER;
 
 struct RequestState { std::string body; bool replied = false; };
 
@@ -76,6 +78,8 @@ bool JsonInt(const std::string& body, const char* key, int* out) {
     char* end = nullptr;
     long v = std::strtol(body.c_str() + p, &end, 10);
     if (end == body.c_str() + p || v < 1 || v > 65535) return false;
+    while (*end && std::isspace(static_cast<unsigned char>(*end))) ++end;
+    if (*end != ',' && *end != '}') return false;
     *out = static_cast<int>(v);
     return true;
 }
@@ -93,7 +97,9 @@ MHD_Result Reply(MHD_Connection* conn, unsigned int status, const std::string& b
     return result;
 }
 MHD_Result Status(MHD_Connection* conn) {
+    pthread_mutex_lock(&g_mount_api_lock);
     const auto s = g_mount.Status();
+    pthread_mutex_unlock(&g_mount_api_lock);
     std::string body = "{\"state\":\"ready\",\"mounted\":" +
         std::string(s.mounted ? "true" : "false") + ",\"protocol\":" +
         (s.protocol.empty() ? "null" : Quote(s.protocol)) + ",\"endpoint\":" +
@@ -148,7 +154,9 @@ MHD_Result Access(void*, MHD_Connection* conn, const char* url, const char* meth
         (void)JsonString(state->body, "username", &username);
         (void)JsonString(state->body, "password", &password);
         (void)username; (void)password; // Never log or echo credentials.
-        (void)JsonInt(state->body, "port", &port);
+        if (state->body.find("\\"port\\"") != std::string::npos &&
+            !JsonInt(state->body, "port", &port))
+            return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_port", "Port must be an integer from 1 to 65535.");
         if (host.empty() || host.size() > 253 ||
             host.find_first_of(" /\\\r\n\t") != std::string::npos)
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_host", "Enter a hostname or IP address only.");
@@ -160,8 +168,12 @@ MHD_Result Access(void*, MHD_Connection* conn, const char* url, const char* meth
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "unsafe_mountpoint",
                             "For safety, the only allowed mountpoint is /hostapp.");
         std::string error;
-        if (!g_mount.Mount(protocol, host, port, remote, mountpoint, &error))
-            return ApiError(conn, MHD_HTTP_NOT_IMPLEMENTED, "mount_adapter_unavailable", error);
+        pthread_mutex_lock(&g_mount_api_lock);
+        const bool mounted = g_mount.Mount(protocol, host, port, remote, mountpoint,
+                                           username, password, &error);
+        pthread_mutex_unlock(&g_mount_api_lock);
+        if (!mounted)
+            return ApiError(conn, MHD_HTTP_INTERNAL_SERVER_ERROR, "mount_failed", error);
         return Status(conn);
     }
     if (verb == "POST" && path == "/api/v1/unmount") {
@@ -169,7 +181,10 @@ MHD_Result Access(void*, MHD_Connection* conn, const char* url, const char* meth
         if (!JsonString(state->body, "mountpoint", &mountpoint))
             return ApiError(conn, MHD_HTTP_BAD_REQUEST, "invalid_request", "mountpoint is required.");
         std::string error;
-        if (!g_mount.Unmount(mountpoint, &error))
+        pthread_mutex_lock(&g_mount_api_lock);
+        const bool unmounted = g_mount.Unmount(mountpoint, &error);
+        pthread_mutex_unlock(&g_mount_api_lock);
+        if (!unmounted)
             return ApiError(conn, MHD_HTTP_CONFLICT, "unmount_failed", error);
         return Status(conn);
     }
