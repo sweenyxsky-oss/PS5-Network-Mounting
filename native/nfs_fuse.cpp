@@ -142,7 +142,7 @@ int FsRead(const char*, char* buf, size_t size, off_t offset, struct fuse_file_i
     if (!buf || !fi || offset < 0 || size > 8 * 1024 * 1024) return -EINVAL;
     auto* fh = reinterpret_cast<struct nfsfh*>(static_cast<uintptr_t>(fi->fh));
     pthread_mutex_lock(&g_lock);
-    const int rc = nfs_pread(g_nfs, fh, buf, size, static_cast<uint64_t>(offset));
+    const int rc = nfs_pread(g_nfs, fh, static_cast<uint64_t>(offset), size, buf);
     pthread_mutex_unlock(&g_lock);
     return rc;
 }
