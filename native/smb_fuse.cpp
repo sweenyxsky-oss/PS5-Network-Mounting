@@ -1,9 +1,12 @@
 #include "smb_fuse.hpp"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #define FUSE_USE_VERSION 26
 #include <fuse/fuse.h>
-#include <smb2/libsmb2.h>
 #include <smb2/smb2.h>
+#include <smb2/libsmb2.h>
 
 #include <cerrno>
 #include <cstdint>
