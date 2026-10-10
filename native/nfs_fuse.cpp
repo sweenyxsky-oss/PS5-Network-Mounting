@@ -14,6 +14,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <time.h>
 #include <unistd.h>
 #include <vector>
 
@@ -27,7 +28,9 @@ struct nfs_url* g_url = nullptr;
 struct fuse_chan* g_channel = nullptr;
 struct fuse* g_fuse = nullptr;
 pthread_t g_loop_thread{};
+pthread_cond_t g_loop_cond = PTHREAD_COND_INITIALIZER;
 bool g_thread_started = false;
+bool g_loop_started = false;
 bool g_loop_alive = false;
 bool g_mounted = false;
 bool g_nfs_connected = false;
@@ -176,6 +179,11 @@ int FsStatfs(const char* path, struct statvfs* st) {
 }
 struct fuse_operations g_ops = {};
 void* FuseLoop(void*) {
+    pthread_mutex_lock(&g_lock);
+    g_loop_started = true;
+    g_loop_alive = true;
+    pthread_cond_broadcast(&g_loop_cond);
+    pthread_mutex_unlock(&g_lock);
     const int rc = fuse_loop(g_fuse);
     pthread_mutex_lock(&g_lock);
     g_loop_alive = false;
@@ -279,9 +287,11 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
     g_mountpoint = mountpoint;
-    g_loop_alive = true;
+    pthread_mutex_lock(&g_lock);
+    g_loop_started = false;
+    g_loop_alive = false;
+    pthread_mutex_unlock(&g_lock);
     if (pthread_create(&g_loop_thread, nullptr, FuseLoop, nullptr) != 0) {
-        g_loop_alive = false;
         if (error) *error = "Could not start the FUSE request loop.";
         fuse_unmount(mountpoint.c_str(), g_channel);
         fuse_destroy(g_fuse);
@@ -290,10 +300,30 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
     g_thread_started = true;
+    timespec deadline{};
+    (void)clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 2;
+    pthread_mutex_lock(&g_lock);
+    int wait_result = 0;
+    while (!g_loop_started && wait_result == 0)
+        wait_result = pthread_cond_timedwait(&g_loop_cond, &g_lock, &deadline);
+    const bool loop_started = g_loop_started;
+    const bool loop_alive = g_loop_alive;
+    pthread_mutex_unlock(&g_lock);
+    if (!loop_started || !loop_alive) {
+        if (error) *error = "FUSE request loop did not stay alive after mount initialization.";
+        (void)StopNfsFuse(mountpoint, nullptr);
+        return false;
+    }
     pthread_mutex_lock(&g_lock);
     g_mounted = true;
     g_last_error.clear();
     pthread_mutex_unlock(&g_lock);
+    if (!NfsFuseIsMounted()) {
+        if (error) *error = "NFS FUSE mount stopped during startup verification.";
+        (void)StopNfsFuse(mountpoint, nullptr);
+        return false;
+    }
     return true;
 }
 
