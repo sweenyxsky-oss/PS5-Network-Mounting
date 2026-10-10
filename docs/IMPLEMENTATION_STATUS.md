@@ -1,18 +1,21 @@
 # Implementation status
 
-The branch contains the browser UI, an embedded copy of the page, a native libmicrohttpd HTTP server, API routes for status/mount/unmount, bounded request bodies, validation, JSON escaping, and a PS5 SDK Makefile. A host CMake build and GitHub Actions compile check are included.
+## Present in the branch
 
-The server defaults to port 18080 and can use PS5NM_PORT to select a port from 1024 through 65535. It listens on all interfaces for LAN browser access. Do not expose this service to the public internet.
+- Browser UI in `web/index.html`, embedded as `native/web_assets.hpp`.
+- Native HTTP API for status, mount, and unmount.
+- Request-body limits, input validation, JSON escaping, and no credential logging.
+- A read-only NFS FUSE adapter in `native/nfs_fuse.cpp`, using the PS5-compatible FUSE and libnfs APIs.
+- An optional build switch: `PS5NM_WITH_FUSE=1` with `ORBISDEV` set to an SDK that has the patched FUSE and `liborbisNfs` libraries installed.
 
-## Mounting is not enabled yet
+## Not yet verified
 
-The current backend deliberately reports an error instead of claiming a network filesystem is mounted. Itemzflow uses a PS5-specific patched libfuse and fuse-nfs/libnfs implementation inside its daemon; a remote file browser or ordinary desktop mount command is not equivalent. That target-specific filesystem adapter has not yet been integrated or verified on firmware 13.60.
+The NFS adapter is new integration code and has **not been compiled against the target SDK or tested on a PS5**. The default build excludes it, so the default payload reports that the adapter is not linked. The optional build currently mixes the PS5 payload SDK toolchain with ORBISDEV libraries; ABI compatibility must be confirmed before relying on it.
 
-Remaining work for a genuine NFS release:
-1. Integrate PS5-compatible patched libfuse and fuse-nfs, preserving required license notices.
-2. Build libnfs and the FUSE layer against the PS5 SDK.
-3. Integrate owned mount/unmount lifecycle and verify actual files at /hostapp before setting mounted=true.
-4. Test with a TrueNAS NFS export, including export permissions, bad paths, network loss, reconnect and cleanup.
-5. Implement separate SMB and FTP/SFTP filesystem adapters only after the NFS path is proven.
+The FUSE adapter is read-only by design. It initializes libnfs, checks the NFS export, creates a FUSE mount at `/hostapp`, and exposes directory listing, metadata, symlinks, and file reads. It must be validated for firmware 13.60, unmount/reconnect, empty exports, permissions, thread shutdown, and actual file reads before being treated as working.
 
-No PS5 SDK build or on-console test is claimed until it has actually run.
+SMB, FTP, and SFTP are still not filesystem mounts and return explicit unsupported errors. ezRemote's remote browsing/transfer code is not a mount adapter.
+
+## Build notes
+
+The default native HTTP server listens on port 18080. The optional FUSE adapter requires `PS5NM_WITH_FUSE=1` and `ORBISDEV`. No successful build or on-console test is claimed.
