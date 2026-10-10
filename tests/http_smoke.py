@@ -57,8 +57,8 @@ try:
     assert code == 400 and json.loads(raw)["error"] == "unsafe_mountpoint"
 
     code, raw = request("/api/v1/mount", "POST", {
-        "protocol": "nfs", "host": "127.0.0.1", "port": 2049,
-        "remote_path": "/mnt/dataPool/games", "mountpoint": "/hostapp",
+        "protocol": "smb", "host": "127.0.0.1", "port": 445,
+        "remote_path": "games", "mountpoint": "/hostapp",
     })
     assert code == 500
     assert "no PS5 FUSE/NFS/SMB adapters linked" in json.loads(raw)["message"]
