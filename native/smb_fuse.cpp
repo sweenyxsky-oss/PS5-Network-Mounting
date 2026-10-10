@@ -36,7 +36,7 @@ bool SafePath(const char* path) {
     if (!path || path[0] != '/') return false;
     const std::string s(path);
     if (s.size() > 4096 || s.find('\\\\') != std::string::npos ||
-        s.find_first_of("\\r\\n") != std::string::npos) return false;
+        s.find_first_of("\r\n") != std::string::npos) return false;
     size_t start = 1;
     while (start <= s.size()) {
         const size_t end = s.find('/', start);
@@ -214,14 +214,14 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
                   const std::string& mountpoint, const std::string& username,
                   const std::string& password, std::string* error) {
     if (host.empty() || host.size() > 253 ||
-        host.find_first_of(":/\\ \\t\\r\\n@;") != std::string::npos) {
+        host.find_first_of(":/\\ \t\r\n@;") != std::string::npos) {
         if (error) *error = "Enter an IPv4 address or DNS hostname. IPv6 literals are not supported yet.";
         return false;
     }
     if (port < 1 || port > 65535 || mountpoint != "/hostapp" ||
         share_and_path.empty() || share_and_path.front() == '/' ||
         share_and_path.find("..") != std::string::npos ||
-        share_and_path.find_first_of("?#\\\\\\r\\n") != std::string::npos) {
+        share_and_path.find_first_of("?#\\\r\n") != std::string::npos) {
         if (error) *error = "Invalid SMB port, share path, or mountpoint. Enter ShareName or ShareName/subfolder.";
         return false;
     }
