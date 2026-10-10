@@ -17,6 +17,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <time.h>
 #include <unistd.h>
 
 extern "C" int fuse_fw_supported(void);
@@ -28,7 +29,9 @@ struct smb2_context* g_smb = nullptr;
 struct fuse_chan* g_smb_channel = nullptr;
 struct fuse* g_smb_fuse = nullptr;
 pthread_t g_smb_thread{};
+pthread_cond_t g_smb_loop_cond = PTHREAD_COND_INITIALIZER;
 bool g_smb_thread_started = false;
+bool g_smb_loop_started = false;
 bool g_smb_loop_alive = false;
 bool g_smb_mounted = false;
 bool g_smb_connected = false;
@@ -184,6 +187,11 @@ int SmbStatfs(const char* path, struct statvfs* st) {
 
 struct fuse_operations g_smb_ops = {};
 void* SmbLoop(void*) {
+    pthread_mutex_lock(&g_smb_lock);
+    g_smb_loop_started = true;
+    g_smb_loop_alive = true;
+    pthread_cond_broadcast(&g_smb_loop_cond);
+    pthread_mutex_unlock(&g_smb_lock);
     const int rc = fuse_loop(g_smb_fuse);
     pthread_mutex_lock(&g_smb_lock);
     g_smb_loop_alive = false;
@@ -320,9 +328,11 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
         return false;
     }
     g_smb_mountpoint = mountpoint;
-    g_smb_loop_alive = true;
+    pthread_mutex_lock(&g_smb_lock);
+    g_smb_loop_started = false;
+    g_smb_loop_alive = false;
+    pthread_mutex_unlock(&g_smb_lock);
     if (pthread_create(&g_smb_thread, nullptr, SmbLoop, nullptr) != 0) {
-        g_smb_loop_alive = false;
         if (error) *error = "Could not start the SMB FUSE request loop.";
         fuse_unmount(mountpoint.c_str(), g_smb_channel);
         fuse_destroy(g_smb_fuse);
@@ -332,10 +342,30 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
         return false;
     }
     g_smb_thread_started = true;
+    timespec deadline{};
+    (void)clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 2;
+    pthread_mutex_lock(&g_smb_lock);
+    int wait_result = 0;
+    while (!g_smb_loop_started && wait_result == 0)
+        wait_result = pthread_cond_timedwait(&g_smb_loop_cond, &g_smb_lock, &deadline);
+    const bool loop_started = g_smb_loop_started;
+    const bool loop_alive = g_smb_loop_alive;
+    pthread_mutex_unlock(&g_smb_lock);
+    if (!loop_started || !loop_alive) {
+        if (error) *error = "SMB FUSE request loop did not stay alive after mount initialization.";
+        (void)StopSmbFuse(mountpoint, nullptr);
+        return false;
+    }
     pthread_mutex_lock(&g_smb_lock);
     g_smb_mounted = true;
     g_smb_error.clear();
     pthread_mutex_unlock(&g_smb_lock);
+    if (!SmbFuseIsMounted()) {
+        if (error) *error = "SMB FUSE mount stopped during startup verification.";
+        (void)StopSmbFuse(mountpoint, nullptr);
+        return false;
+    }
     return true;
 }
 
