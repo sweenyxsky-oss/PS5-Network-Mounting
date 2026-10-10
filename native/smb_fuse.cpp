@@ -75,8 +75,6 @@ void FillStat(const struct smb2_stat_64& src, struct stat* dst) {
     dst->st_ctime = static_cast<time_t>(src.smb2_ctime);
     if (src.smb2_type == SMB2_TYPE_DIRECTORY)
         dst->st_mode = S_IFDIR | 0555;
-    else if (src.smb2_type == SMB2_TYPE_LINK)
-        dst->st_mode = S_IFLNK | 0444;
     else
         dst->st_mode = S_IFREG | 0444;
 }
