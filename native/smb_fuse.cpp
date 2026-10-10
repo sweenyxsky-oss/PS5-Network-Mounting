@@ -278,6 +278,13 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
         CleanupSmb();
         return false;
     }
+    struct smb2_stat_64 root_stat{};
+    if (smb2_stat(g_smb, root.c_str(), &root_stat) != 0) {
+        if (error) *error = std::string("SMB share connected, but the requested share/subfolder is not readable: ") + smb2_get_error(g_smb);
+        smb2_destroy_url(url);
+        CleanupSmb();
+        return false;
+    }
     smb2_destroy_url(url);
     g_smb_connected = true;
     g_smb_root = root;
