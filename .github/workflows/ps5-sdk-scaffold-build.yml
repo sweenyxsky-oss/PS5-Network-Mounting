@@ -1,0 +1,52 @@
+name: PS5 SDK scaffold build
+
+on:
+  push:
+    branches:
+      - main
+      - dev/first-web-payload
+      - chore/ps5-sdk-scaffold-build
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-scaffold:
+    name: Compile UI/API scaffold with public PS5 payload SDK
+    runs-on: ubuntu-latest
+    env:
+      PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 make python3 unzip wget
+
+      - name: Download public PS5 payload SDK
+        run: |
+          set -eux
+          wget -O /tmp/ps5-payload-sdk.zip \
+            https://github.com/ps5-payload-dev/sdk/releases/latest/download/ps5-payload-sdk.zip
+          sudo unzip -q /tmp/ps5-payload-sdk.zip -d /opt
+          test -f "$PS5_PAYLOAD_SDK/toolchain/prospero.mk"
+
+      - name: Build scaffold without filesystem adapters
+        run: |
+          set -eux
+          make clean PS5NM_WITH_FUSE=0 PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK"
+          make PS5NM_WITH_FUSE=0 PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK"
+          test -s build/PS5NetworkMounting.elf
+          file build/PS5NetworkMounting.elf
+
+      - name: Upload scaffold ELF for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS5NetworkMounting-scaffold-ELF
+          path: build/PS5NetworkMounting.elf
+          if-no-files-found: error
+          retention-days: 7
