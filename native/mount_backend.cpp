@@ -8,6 +8,7 @@ namespace ps5nm {
 
 MountStatus MountBackend::Status() const {
     MountStatus current = status_;
+    current.can_disconnect = status_.mounted || !status_.protocol.empty();
 #ifdef PS5NM_WITH_FUSE
     if (current.mounted && current.protocol == "nfs" && !NfsFuseIsMounted()) {
         current.mounted = false;
