@@ -11,9 +11,9 @@ ifeq ($(PS5NM_WITH_FUSE),1)
 ifndef ORBISDEV
 $(error Set ORBISDEV to an SDK with the PS5-compatible FUSE and NFS libraries installed)
 endif
-SRC += native/nfs_fuse.cpp
+SRC += native/nfs_fuse.cpp native/smb_fuse.cpp
 CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
-LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lorbisNfs -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
+LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lorbisNfs -lsmb2 -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
 endif
 
 ifdef PS5_PAYLOAD_SDK
@@ -25,9 +25,9 @@ all: check-sdk $(TARGET)
 check-sdk:
 	@test -f "$(PS5_PAYLOAD_SDK)/toolchain/prospero.mk" || (echo "PS5 SDK toolchain not found"; exit 1)
 	@test -f "$(PS5_PAYLOAD_SDK)/target/lib/libmicrohttpd.a" || (echo "libmicrohttpd.a missing"; exit 1)
-$(TARGET): $(SRC) native/mount_backend.hpp native/web_assets.hpp native/nfs_fuse.hpp
+$(TARGET): $(SRC) native/mount_backend.hpp native/web_assets.hpp native/nfs_fuse.hpp native/smb_fuse.hpp
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS_PS5) $(INCLUDES) $(SRC) -o $@ $(LDFLAGS_PS5)
-	@echo "Build complete. Enable PS5NM_WITH_FUSE=1 to compile the optional NFS FUSE adapter."
+	@echo "Build complete. NFS and SMB FUSE adapters were included."
 clean:
 	rm -rf $(BUILD)
