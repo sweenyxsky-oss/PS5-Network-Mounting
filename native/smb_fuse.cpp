@@ -40,7 +40,7 @@ std::string g_smb_error;
 bool SafePath(const char* path) {
     if (!path || path[0] != '/') return false;
     const std::string s(path);
-    if (s.size() > 4096 || s.find('\\\\') != std::string::npos ||
+    if (s.size() > 4096 || s.find('\\') != std::string::npos ||
         s.find_first_of("\r\n") != std::string::npos) return false;
     size_t start = 1;
     while (start <= s.size()) {
