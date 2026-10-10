@@ -39,8 +39,16 @@ jobs:
           set -eux
           git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo.git /tmp/pacbrew-repo
           cd /tmp/pacbrew-repo
-          # Upstream CI builds the SDK and cross-compiled library packages into /opt/ps5-payload-sdk.
-          bash ci-libs.sh
+          # Build only target libraries used by this payload. ci-libs.sh also builds
+          # unrelated graphics, media, and UI stacks and can consume the entire job timeout.
+          for package in sdk openlibm libcxx zlib openssl libnfs libsmb2; do
+            pushd "$package"
+            rm -f ./*.pkg.tar.gz
+            rm -rf src pkg
+            makepkg --noconfirm -c -f -C
+            sudo pacman --config "$PWD/../pacman.conf" --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+            popd
+          done
           test -f "$PS5_PAYLOAD_SDK/toolchain/prospero.mk"
           find "$ORBISDEV/usr/include" -maxdepth 3 \( -path '*/nfsc/libnfs.h' -o -path '*/smb2/libsmb2.h' \) -print
           test -f "$ORBISDEV/usr/include/nfsc/libnfs.h"
