@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>PS5 Network Mounting</title>
+<style>
+:root{color-scheme:dark;--bg:#090d14;--panel:#121a27;--panel2:#182335;--line:#28364b;--text:#edf3ff;--muted:#91a2ba;--accent:#5ca9ff;--good:#54d6a0;--bad:#ff7c85;--warn:#ffc76a}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#14233a 0,#090d14 55%);color:var(--text);font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+header{padding:28px clamp(18px,4vw,52px) 20px;border-bottom:1px solid var(--line);background:#0b111bd9}
+.brand{display:flex;gap:14px;align-items:center}.logo{width:46px;height:46px;border-radius:13px;background:linear-gradient(145deg,#74bdff,#2764d8);display:grid;place-items:center;font-weight:900;font-size:22px;color:#061120;box-shadow:0 8px 28px #2764d844}
+h1{font-size:clamp(21px,3vw,30px);margin:0;letter-spacing:.2px}header p{margin:5px 0 0;color:var(--muted);font-size:14px}
+main{max-width:1100px;margin:28px auto;padding:0 18px 40px;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:20px}
+.panel{background:linear-gradient(160deg,#141e2c,#101722);border:1px solid var(--line);border-radius:18px;padding:clamp(18px,3vw,28px);box-shadow:0 16px 44px #0002}
+h2{font-size:18px;margin:0 0 5px} .sub{color:var(--muted);font-size:13px;margin:0 0 22px}
+label{display:block;font-size:13px;font-weight:650;color:#c6d4e8;margin-bottom:7px}
+input,select{width:100%;min-height:46px;border-radius:10px;border:1px solid #33445c;background:#0a111b;color:var(--text);padding:10px 12px;font:inherit;outline:none}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px #5ca9ff22}
+.field{margin-bottom:17px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.hint{color:var(--muted);font-size:12px;margin-top:6px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}button{border:0;border-radius:10px;padding:12px 17px;min-height:45px;font:700 14px system-ui;cursor:pointer}
+.primary{background:var(--accent);color:#071321}.secondary{background:#202d40;color:var(--text);border:1px solid #35465d}.danger{background:#3a1b27;color:#ffb9bf;border:1px solid #713440}button:disabled{opacity:.45;cursor:not-allowed}
+.status-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.pill{font-size:11px;letter-spacing:.5px;text-transform:uppercase;font-weight:800;padding:5px 9px;border-radius:99px;background:#273348;color:#c3d0e4}.pill.good{background:#123c32;color:var(--good)}.pill.bad{background:#431e29;color:var(--bad)}.pill.warn{background:#45351b;color:var(--warn)}
+.statbox{margin-top:18px;padding:15px;background:#0b121d;border:1px solid var(--line);border-radius:12px}.statrow{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #202c3c;font-size:13px}.statrow:last-child{border:0}.statrow span:first-child{color:var(--muted)}.statrow strong{font-weight:650;text-align:right;overflow-wrap:anywhere}
+.notice{display:none;margin-top:15px;padding:12px 14px;border-radius:10px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.notice.show{display:block}.notice.info{background:#16283b;border:1px solid #2b4e72}.notice.error{background:#351c25;border:1px solid #713440;color:#ffc4c9}.notice.ok{background:#12352e;border:1px solid #236450;color:#a6f0d2}
+.warning{margin-top:18px;padding:12px;border-left:3px solid var(--warn);background:#2a2418;color:#d8c7a3;font-size:12px;border-radius:0 8px 8px 0}
+footer{max-width:1100px;margin:0 auto;padding:0 18px 28px;color:var(--muted);font-size:12px}
+@media(max-width:760px){main{grid-template-columns:1fr;margin-top:18px}.two{grid-template-columns:1fr}.panel{padding:19px}}
+</style>
+</head>
+<body>
+<header><div class="brand"><div class="logo">N</div><div><h1>PS5 Network Mounting</h1><p>Network shares · Local filesystem mounts · Payload control panel</p></div></div></header>
+<main>
+<section class="panel">
+<h2>New connection</h2><p class="sub">Configure a remote share. Credentials are sent only to this payload's API when you connect.</p>
+<form id="connectForm">
+<div class="field"><label for="protocol">Protocol</label><select id="protocol" name="protocol"><option value="nfs">NFS — filesystem mount (first target)</option><option value="smb">SMB / Windows share</option><option value="ftp">FTP</option><option value="sftp">SFTP</option></select><div class="hint" id="protocolHint">NFS is the first implementation target. Mount support is not confirmed until the native backend succeeds.</div></div>
+<div class="two">
+<div class="field"><label for="host">Server IP / hostname</label><input id="host" name="host" placeholder="192.168.1.10" autocomplete="off" required></div>
+<div class="field"><label for="port">Port</label><input id="port" name="port" type="number" min="1" max="65535" placeholder="2049"></div>
+</div>
+<div class="field"><label for="remotePath" id="pathLabel">NFS export path</label><input id="remotePath" name="remotePath" placeholder="/mnt/tank/ps5" autocomplete="off" required><div class="hint" id="pathHint">Enter the exported path exactly as configured on the NFS server.</div></div>
+<div id="credentials" class="two" hidden>
+<div class="field"><label for="username">Username</label><input id="username" name="username" autocomplete="username"></div>
+<div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password"></div>
+</div>
+<div class="field"><label for="mountpoint">Local mount point</label><input id="mountpoint" name="mountpoint" value="/hostapp" required><div class="hint">The payload must validate that the target is safe and available before mounting.</div></div>
+<div class="actions"><button class="primary" id="connectBtn" type="submit">Connect &amp; mount</button><button class="secondary" id="disconnectBtn" type="button">Disconnect</button><button class="secondary" id="refreshBtn" type="button">Refresh status</button></div>
+</form>
+<div class="notice info show" id="notice" role="status" aria-live="polite">Waiting for payload API at this page's origin. No mount has been attempted yet.</div>
+</section>
+<aside class="panel">
+<div class="status-head"><h2>Mount status</h2><span class="pill warn" id="statusPill">Checking</span></div>
+<p class="sub">Live status reported by the native payload backend.</p>
+<div class="statbox">
+<div class="statrow"><span>Payload API</span><strong id="apiStatus">Not checked</strong></div>
+<div class="statrow"><span>Protocol</span><strong id="statusProtocol">—</strong></div>
+<div class="statrow"><span>Remote endpoint</span><strong id="endpoint">—</strong></div>
+<div class="statrow"><span>Mount point</span><strong id="mountpointStatus">/hostapp</strong></div>
+<div class="statrow"><span>Filesystem state</span><strong id="fsState">Unknown</strong></div>
+<div class="statrow"><span>Last result</span><strong id="lastResult">No operation yet</strong></div>
+</div>
+<div class="warning">Safety note: do not mount over an in-use system path. The native backend must verify mountpoint state and must not report success merely because a remote server is reachable.</div>
+</aside>
+</main>
+<footer>PS5 Network Mounting · Development UI · A successful HTTP response is not proof of a working filesystem mount.</footer>
+<script>
+(() => {
+ const $ = id => document.getElementById(id);
+ const form = $('connectForm'), protocol = $('protocol');
+ const defaultPorts = {nfs:2049,smb:445,ftp:21,sftp:22};
+ const descriptions = {
+  nfs:['NFS export path','/mnt/tank/ps5','Enter the exported path exactly as configured on the NFS server.','NFS is the first implementation target. Mount support is not confirmed until the native backend succeeds.'],
+  smb:['Share name / subpath','games','Enter the SMB share name, optionally followed by a subpath.','SMB browsing support does not automatically provide filesystem-mount support.'],
+  ftp:['Remote directory','/','Enter a remote directory. FTP will need a filesystem bridge to appear as a local mount.','FTP is not a native mountable filesystem; it requires a compatible adapter.'],
+  sftp:['Remote directory','/','Enter a remote directory. SFTP will need a filesystem bridge to appear as a local mount.','SFTP is not a native mountable filesystem; it requires a compatible adapter.']
+ };
+ function setNotice(message, kind='info'){const n=$('notice');n.textContent=message;n.className='notice show '+kind}
+ function updateProtocol(){
+  const p=protocol.value, d=descriptions[p];
+  $('pathLabel').textContent=d[0]; $('remotePath').placeholder=d[1]; $('pathHint').textContent=d[2]; $('protocolHint').textContent=d[3];
+  $('port').value=defaultPorts[p]; $('credentials').hidden=(p==='nfs');
+  $('username').required=(p==='smb'||p==='ftp'||p==='sftp');
+  $('password').required=(p==='smb'||p==='ftp'||p==='sftp');
+ }
+ function endpoint(){
+  const p=protocol.value,h=$('host').value.trim(),port=$('port').value;
+  return h ? p+'://'+h+(port && Number(port)!==defaultPorts[p]?':'+port:'')+$('remotePath').value : '—';
+ }
+ async function api(path, options={}){
+  const response=await fetch('/api/v1'+path,{cache:'no-store',...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
+  const raw=await response.text(); let data={};
+  try{data=raw?JSON.parse(raw):{}}catch{data={message:raw||response.statusText}}
+  if(!response.ok) throw new Error(data.error||data.message||('HTTP '+response.status));
+  return data;
+ }
+ function applyStatus(data){
+  $('apiStatus').textContent='Online'; $('statusProtocol').textContent=data.protocol||'—'; $('endpoint').textContent=data.endpoint||'—';
+  $('mountpointStatus').textContent=data.mountpoint||$('mountpoint').value||'/hostapp';
+  $('fsState').textContent=data.mounted?'Mounted':(data.state||'Not mounted');
+  $('lastResult').textContent=data.last_error||data.last_result||'—';
+  const pill=$('statusPill');pill.textContent=data.mounted?'Mounted':(data.state||'Ready');pill.className='pill '+(data.mounted?'good':'warn');
+  $('disconnectBtn').disabled=!data.mounted;
+ }
+ async function refresh(){
+  try{applyStatus(await api('/status'))}
+  catch(e){$('apiStatus').textContent='Unavailable';$('statusPill').textContent='API offline';$('statusPill').className='pill bad';$('disconnectBtn').disabled=true;setNotice('Cannot reach the native payload API. '+e.message+'\nThe frontend is loaded, but no connection or mount has been made.','error')}
+ }
+ protocol.addEventListener('change',updateProtocol);
+ $('host').addEventListener('input',()=>$('endpoint').textContent=endpoint());
+ $('remotePath').addEventListener('input',()=>$('endpoint').textContent=endpoint());
+ $('port').addEventListener('input',()=>$('endpoint').textContent=endpoint());
+ $('refreshBtn').addEventListener('click',refresh);
+ form.addEventListener('submit',async e=>{
+  e.preventDefault(); const btn=$('connectBtn');btn.disabled=true;setNotice('Sending mount request to payload…');
+  const body={protocol:protocol.value,host:$('host').value.trim(),port:Number($('port').value||defaultPorts[protocol.value]),remote_path:$('remotePath').value.trim(),mountpoint:$('mountpoint').value.trim(),username:$('username').value,password:$('password').value};
+  try{const result=await api('/mount',{method:'POST',body:JSON.stringify(body)});setNotice(result.message||'Request completed. Checking actual mount state…',result.mounted?'ok':'info');await refresh()}
+  catch(err){setNotice('Mount request failed: '+err.message,'error');await refresh()}
+  finally{btn.disabled=false}
+ });
+ $('disconnectBtn').addEventListener('click',async()=>{
+  $('disconnectBtn').disabled=true;
+  try{const result=await api('/unmount',{method:'POST',body:JSON.stringify({mountpoint:$('mountpoint').value.trim()})});setNotice(result.message||'Unmount request completed.','info');await refresh()}
+  catch(err){setNotice('Disconnect failed: '+err.message,'error');await refresh()}
+ });
+ updateProtocol(); refresh();
+})();
+</script>
+</body>
+</html>
