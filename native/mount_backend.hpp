@@ -3,6 +3,7 @@
 namespace ps5nm {
 struct MountStatus {
     bool mounted = false;
+    bool can_disconnect = false;
     std::string protocol, endpoint;
     std::string mountpoint = "/hostapp";
     std::string last_result = "No operation yet";
