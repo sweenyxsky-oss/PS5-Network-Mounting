@@ -14,25 +14,30 @@ endif
 SRC += native/nfs_fuse.cpp native/smb_fuse.cpp
 CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
 LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lorbisNfs -lsmb2 -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
+CHECK_FUSE := check-fuse-sdk
+else
+CHECK_FUSE :=
 endif
 
 ifdef PS5_PAYLOAD_SDK
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-.PHONY: all clean check-sdk embed-ui
-all: check-sdk $(TARGET)
+.PHONY: all clean check-sdk check-fuse-sdk embed-ui
+all: check-sdk $(CHECK_FUSE) $(TARGET)
+
 check-sdk:
 	@test -f "$(PS5_PAYLOAD_SDK)/toolchain/prospero.mk" || (echo "PS5 SDK toolchain not found"; exit 1)
 	@test -f "$(PS5_PAYLOAD_SDK)/target/lib/libmicrohttpd.a" || (echo "libmicrohttpd.a missing"; exit 1)
-ifeq ($(PS5NM_WITH_FUSE),1)
+
+check-fuse-sdk:
 	@test -f "$(ORBISDEV)/usr/include/fuse/fuse.h" || (echo "ORBISDEV FUSE headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/include/orbisNfs.h" || (echo "ORBISDEV liborbisNfs headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/include/smb2/libsmb2.h" || (echo "ORBISDEV libsmb2 headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/libfuse.a" || (echo "ORBISDEV libfuse.a missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/liborbisNfs.a" || (echo "ORBISDEV liborbisNfs.a missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/libsmb2.a" || (echo "ORBISDEV libsmb2.a missing"; exit 1)
-endif
+
 native/web_assets.hpp: web/index.html tools/embed_ui.py
 	python3 tools/embed_ui.py $< $@
 
@@ -41,6 +46,7 @@ embed-ui: native/web_assets.hpp
 $(TARGET): $(SRC) native/mount_backend.hpp native/web_assets.hpp native/nfs_fuse.hpp native/smb_fuse.hpp
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS_PS5) $(INCLUDES) $(SRC) -o $@ $(LDFLAGS_PS5)
-	@echo "Build complete. NFS and SMB FUSE adapters were included."
+	@echo "Build complete. NFS and SMB FUSE adapters were included when PS5NM_WITH_FUSE=1."
+
 clean:
 	rm -rf $(BUILD)
