@@ -9,11 +9,11 @@ LDFLAGS_PS5 := -L$(PS5_PAYLOAD_SDK)/target/lib -lpthread -lkernel_sys -lSceNet -
 PS5NM_WITH_FUSE ?= 1
 ifeq ($(PS5NM_WITH_FUSE),1)
 ifndef ORBISDEV
-$(error Set ORBISDEV to an SDK with PS5-compatible libfuse, liborbisNfs, and libsmb2 installed)
+$(error Set ORBISDEV to an SDK with PS5-compatible libfuse, libnfs, and libsmb2 installed)
 endif
 SRC += native/nfs_fuse.cpp native/smb_fuse.cpp
 CXXFLAGS_PS5 += -DPS5NM_WITH_FUSE -DFUSE_USE_VERSION=26 -D_FILE_OFFSET_BITS=64 -D__ORBIS__=1 -I$(ORBISDEV)/usr/include -I$(ORBISDEV)/usr/include/orbis
-LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lorbisNfs -lsmb2 -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
+LDFLAGS_PS5 += -L$(ORBISDEV)/usr/lib -lfuse -lnfs -lsmb2 -lorbis -lkernel_stub -lSceNet_stub -lSceNetCtl_stub -lSceSysUtil_stub -lSceSysmodule_stub -lkernel_sys_stub -lSceLibcInternal_stub
 CHECK_FUSE := check-fuse-sdk
 else
 CHECK_FUSE :=
@@ -31,10 +31,10 @@ check-sdk:
 
 check-fuse-sdk:
 	@test -f "$(ORBISDEV)/usr/include/fuse/fuse.h" || (echo "ORBISDEV FUSE headers missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/include/orbisNfs.h" || (echo "ORBISDEV liborbisNfs headers missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/include/nfsc/libnfs.h" || (echo "ORBISDEV libnfs headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/include/smb2/libsmb2.h" || (echo "ORBISDEV libsmb2 headers missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/libfuse.a" || (echo "ORBISDEV libfuse.a missing"; exit 1)
-	@test -f "$(ORBISDEV)/usr/lib/liborbisNfs.a" || (echo "ORBISDEV liborbisNfs.a missing"; exit 1)
+	@test -f "$(ORBISDEV)/usr/lib/libnfs.a" || (echo "ORBISDEV libnfs.a missing"; exit 1)
 	@test -f "$(ORBISDEV)/usr/lib/libsmb2.a" || (echo "ORBISDEV libsmb2.a missing"; exit 1)
 
 native/web_assets.hpp: web/index.html tools/embed_ui.py
