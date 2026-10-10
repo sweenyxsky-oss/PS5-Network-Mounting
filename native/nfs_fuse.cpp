@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <time.h>
+#include <type_traits>
 #include <unistd.h>
 #include <vector>
 
@@ -34,6 +35,20 @@ bool g_mounted = false;
 bool g_nfs_connected = false;
 std::string g_mountpoint;
 std::string g_last_error;
+
+// libnfs releases have used both (offset, count, buffer) and
+// (buffer, count, offset) ordering for the synchronous pread function.
+// Select the available ABI from the installed declaration at compile time.
+template <typename Fn>
+int NfsPreadCompatible(Fn fn, struct nfs_context* context, struct nfsfh* handle,
+                       char* buffer, size_t count, uint64_t offset) {
+    if constexpr (std::is_invocable_r_v<int, Fn, struct nfs_context*, struct nfsfh*,
+                                        uint64_t, uint64_t, char*>) {
+        return fn(context, handle, offset, count, buffer);
+    } else {
+        return fn(context, handle, buffer, count, offset);
+    }
+}
 
 bool SafePath(const char* path) {
     if (!path || path[0] != '/') return false;
@@ -142,7 +157,7 @@ int FsRead(const char*, char* buf, size_t size, off_t offset, struct fuse_file_i
     if (!buf || !fi || offset < 0 || size > 8 * 1024 * 1024) return -EINVAL;
     auto* fh = reinterpret_cast<struct nfsfh*>(static_cast<uintptr_t>(fi->fh));
     pthread_mutex_lock(&g_lock);
-    const int rc = nfs_pread(g_nfs, fh, static_cast<uint64_t>(offset), size, buf);
+    const int rc = NfsPreadCompatible(&nfs_pread, g_nfs, fh, buf, size, static_cast<uint64_t>(offset));
     pthread_mutex_unlock(&g_lock);
     return rc;
 }
