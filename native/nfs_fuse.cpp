@@ -26,6 +26,7 @@ struct fuse_chan* g_channel = nullptr;
 struct fuse* g_fuse = nullptr;
 pthread_t g_loop_thread{};
 bool g_thread_started = false;
+bool g_loop_alive = false;
 bool g_mounted = false;
 std::string g_mountpoint;
 std::string g_last_error;
@@ -116,6 +117,7 @@ struct fuse_operations g_ops = {};
 void* FuseLoop(void*) {
     const int rc = fuse_loop(g_fuse);
     pthread_mutex_lock(&g_lock);
+    g_loop_alive = false;
     if (rc != 0) g_last_error = "FUSE loop stopped with error " + std::to_string(rc);
     pthread_mutex_unlock(&g_lock);
     return nullptr;
@@ -133,7 +135,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
     if (port < 1 || port > 65535 || export_path.empty() || export_path[0] != '/' ||
-        export_path.find("..") != std::string::npos || mountpoint != "/hostapp") {
+        export_path.find("..") != std::string::npos || export_path.find_first_of("?#") != std::string::npos || mountpoint != "/hostapp") {
         if (error) *error = "Invalid NFS port, export path, or mountpoint. Only /hostapp is allowed.";
         return false;
     }
@@ -154,7 +156,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
 
-    std::string url = "nfs://" + host + ":" + std::to_string(port) + export_path;
+    std::string url = "nfs://" + host + export_path + "?nfsport=" + std::to_string(port);
     g_nfs = nfs_init_context();
     if (!g_nfs) {
         if (error) *error = "libnfs could not initialize an NFS context.";
@@ -205,7 +207,9 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
         return false;
     }
     g_mountpoint = mountpoint;
+    g_loop_alive = true;
     if (pthread_create(&g_loop_thread, nullptr, FuseLoop, nullptr) != 0) {
+        g_loop_alive = false;
         if (error) *error = "Could not start the FUSE request loop.";
         fuse_unmount(mountpoint.c_str(), g_channel);
         fuse_destroy(g_fuse);
@@ -227,7 +231,7 @@ bool StopNfsFuse(const std::string& mountpoint, std::string* error) {
         return false;
     }
     pthread_mutex_lock(&g_lock);
-    if (!g_mounted || !g_fuse || !g_channel) {
+    if (!g_fuse || !g_channel) {
         pthread_mutex_unlock(&g_lock);
         if (error) *error = "No NFS mount owned by this payload is active.";
         return false;
@@ -246,7 +250,7 @@ bool StopNfsFuse(const std::string& mountpoint, std::string* error) {
 
 bool NfsFuseIsMounted() {
     pthread_mutex_lock(&g_lock);
-    const bool mounted = g_mounted && g_fuse && g_channel;
+    const bool mounted = g_mounted && g_loop_alive && g_fuse && g_channel;
     pthread_mutex_unlock(&g_lock);
     return mounted;
 }
