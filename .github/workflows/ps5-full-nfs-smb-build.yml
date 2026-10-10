@@ -81,6 +81,7 @@ jobs:
           #include <stdint.h>
           #include <sys/types.h>
           #include <pthread.h>
+          typedef pthread_t ScePthread;
           typedef int32_t SceKernelModule;
           #define scePthreadCreate(thread, attr, start, arg, name) pthread_create((pthread_t*)(thread), (attr), (start), (arg))
           #define scePthreadJoin(thread, result) pthread_join((thread), (result))
