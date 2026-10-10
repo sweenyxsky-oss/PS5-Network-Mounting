@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ps5-full-mount-{ github.ref }
+  group: ps5-full-mount-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
