@@ -41,7 +41,7 @@ bool MountBackend::RecoverStaleMount(std::string* error) {
         return false;
     }
     if (!IsFuseMount(mount_info)) return true;
-#if defined(__ORBIS__) || defined(_ORBIS_)
+#if defined(__FreeBSD__) || defined(__ORBIS__) || defined(_ORBIS_)
     if (unmount("/hostapp", MNT_FORCE) == 0) return true;
 #else
     if (umount2("/hostapp", 0) == 0) return true;

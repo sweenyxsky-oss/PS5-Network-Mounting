@@ -160,16 +160,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
-          TAG="v1.1.2"
-          TITLE="PS5 Network Mounting v1.1.2"
+          TAG="v1.1.3"
+          TITLE="PS5 Network Mounting v1.1.3"
           cat <<'NOTES' > /tmp/release_notes.md
-          ## PS5 Network Mounting v1.1.2
+          ## PS5 Network Mounting v1.1.3
 
           ### Fixes and improvements
           - Bind the control server to all interfaces by default and report reachable console URLs for LAN clients.
           - Verify a running instance before treating a port conflict as a relaunch; unrelated listeners are reported as errors.
           - Launch or refresh the console browser with retry handling, and expose browser status and a manual launch action in the control panel.
-          - Create a home-screen shortcut with an embedded PS5 launcher, metadata, and icon; request a ShadowMountPlus scan when its API is available.
+          - Use a valid HBRW homebrew title ID for the shortcut and request a ShadowMountPlus scan when its API is available. The tile opens the running daemon panel; it does not bootstrap the payload after a reboot.
           - Recover stale FUSE mounts and clean up active mounts when the payload exits.
 
           ### Included artifact

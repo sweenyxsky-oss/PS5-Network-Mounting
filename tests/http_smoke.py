@@ -181,11 +181,13 @@ try:
     assert code == 200
     shortcut_resp = json.loads(raw)
     assert shortcut_resp["ok"] is True
-    shortcut_root = os.path.join(homebrew.name, "PPSA99051")
+    shortcut_root = os.path.join(homebrew.name, "HBRW00001")
     assert shortcut_resp["path"] == shortcut_root
     with open(os.path.join(shortcut_root, "sce_sys", "param.json"), encoding="utf-8") as metadata_file:
         metadata = json.load(metadata_file)
-    assert metadata["titleId"] == "PPSA99051"
+    assert metadata["titleId"] == "HBRW00001"
+    assert metadata["titleId"].startswith("HBRW") and len(metadata["titleId"]) == 9
+    assert metadata["contentId"].startswith("UP9000-HBRW00001_")
     assert metadata["localizedParameters"]["en-US"]["titleName"] == "PS5 Network Mounting"
     launcher_path = os.path.join(shortcut_root, "eboot.bin")
     assert open(launcher_path, "rb").read() == open("/tmp/ps5nm-host", "rb").read()

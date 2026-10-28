@@ -39,7 +39,7 @@ std::string ResolveHomebrewRoot() {
 }
 
 const std::string kHomebrewRoot = ResolveHomebrewRoot();
-const std::string kTitleId = "PPSA99051";
+const std::string kTitleId = "HBRW00001";
 std::mutex g_shortcut_lock;
 constexpr unsigned int kShadowMountPort = 10101;
 constexpr unsigned int kIconWidth = 512;
@@ -345,17 +345,17 @@ ShortcutResult CreateHomeScreenShortcut(const std::string& launcher_elf) {
         "  \"applicationCategoryType\": 0,\n"
         "  \"applicationDrmType\": \"free\",\n"
         "  \"attribute\": 0,\n"
-        "  \"conceptId\": \"99051\",\n"
+        "  \"conceptId\": \"00001\",\n"
         "  \"contentBadgeType\": 1,\n"
-        "  \"contentId\": \"UP9000-PPSA99051_00-PS5NETMOUNT0001\",\n"
-        "  \"contentVersion\": \"01.001.002\",\n"
+        "  \"contentId\": \"UP9000-HBRW00001_00-PS5NETMOUNT0001\",\n"
+        "  \"contentVersion\": \"01.001.003\",\n"
         "  \"downloadDataSize\": 256,\n"
         "  \"gameIntent\": {\"permittedIntents\": [{\"intentType\": \"launchActivity\"}]},\n"
         "  \"localizedParameters\": {\"defaultLanguage\": \"en-US\", \"en-US\": {\"titleName\": \"PS5 Network Mounting\"}},\n"
         "  \"masterVersion\": \"01.00\",\n"
         "  \"requiredSystemSoftwareVersion\": \"0x0000000000000000\",\n"
         "  \"sdkVersion\": \"0x0000000000000000\",\n"
-        "  \"titleId\": \"PPSA99051\",\n"
+        "  \"titleId\": \"HBRW00001\",\n"
         "  \"versionFileUri\": \"\"\n"
         "}\n";
     if (!WriteFile(sce_sys + "/param.json", reinterpret_cast<const unsigned char*>(param_json), sizeof(param_json) - 1, 0644, &result.message)) {

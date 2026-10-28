@@ -11,14 +11,14 @@
 
 **PS5 Network Mounting** is a native PS5 homebrew payload and daemon that mounts remote network shares directly into the PlayStation 5 filesystem at `/hostapp` using a user-space FUSE adapter. Once mounted, the console and homebrew loaders can browse, read, and execute applications, games, and packages directly over the local network without transferring files to the internal SSD or USB storage.
 
-The daemon includes an embedded, high-performance HTTP server serving a modern web control interface designed to match the **ProsperoMgr** user experience and dark visual identity. The interface is accessible from both the **PS5 Web Browser** (`http://127.0.0.1:18080`) and any external browser on the local area network (`http://<ps5-ip>:18080`).
+The daemon includes an embedded HTTP server serving a modern web control interface designed around the **ProsperoMgr** visual identity. The interface is accessible from the PS5 browser and other devices on the local network. The optional home-screen tile is registered through ShadowMountPlus and opens the local control panel only while this payload daemon is running.
 
 ---
 
 ## Key Features
 
 - **Console Integration & UX (ProsperoMgr Style):**
-  - **Automatic WebKit Browser Launch:** On loading the ELF payload, the daemon automatically launches the PS5 modal WebKit browser pointing directly to `http://<PS5-IP>:18080`, giving immediate control on your TV screen without manual URL entry.
+  - **WebKit Browser Launch:** On loading the ELF payload, the daemon attempts to open the PS5 browser at its LAN URL and exposes a manual retry action in the panel.
   - **On-Screen PS5 Toast Notifications:** Displays native on-screen toast notifications upon startup showing the payload version and the local network listening URL (`http://<PS5-IP>:18080`).
   - **Resilient Network Daemon:** Recovers gracefully if `sceNetInit` or net pools are already initialized by your payload launcher or earlier homebrew.
 - **Supported Protocols:**
@@ -79,8 +79,9 @@ The daemon includes an embedded, high-performance HTTP server serving a modern w
 2. The payload initializes networking (`sceNetInit`), starts the FUSE subsystem, and begins listening on `0.0.0.0:18080`.
 
 ### 2. Accessing the Control Panel
-- **From PS5 Browser:** Navigate to `http://127.0.0.1:18080`
-- **From PC / Phone / Mac:** Navigate to `http://<ps5-ip-address>:18080`
+- **From PS5 Browser:** Use the automatic browser launch or navigate to `http://<ps5-ip-address>:18080`.
+- **From PC / Phone / Mac:** Navigate to `http://<ps5-ip-address>:18080`. The console and client device must be on a reachable network.
+- **Home-screen tile:** The tile is a convenience shortcut to the panel, registered through ShadowMountPlus. It does not itself start the network-mounting ELF, so load the payload first after a reboot.
 
 ### 3. Mounting Shares
 - **NFS Share:**
@@ -105,6 +106,7 @@ The web control panel communicates via JSON endpoints under `/api/v1`:
 | `/api/v1/status` | `GET` | Returns live mount status, active protocol, endpoint, and last error. |
 | `/api/v1/mount` | `POST` | Validates parameters and mounts the requested NFS or SMB share to `/hostapp`. |
 | `/api/v1/unmount` | `POST` | Safely detaches the active FUSE filesystem from `/hostapp`. |
+| `/api/v1/shortcut` | `POST` | Creates the HBRW homebrew folder and requests a ShadowMountPlus scan. |
 
 All `POST` requests require `Content-Type: application/json` and `X-Requested-With: PS5NM`. Detailed request/response schemas can be found in [`docs/API.md`](docs/API.md).
 
