@@ -25,6 +25,7 @@
 #include <sys/select.h>
 
 #include "json.hpp"
+#include "diagnostic_log.hpp"
 #include "mount_backend.hpp"
 #include "shortcut.hpp"
 #include "web_assets.hpp"
@@ -61,6 +62,13 @@ void LogKlog(const std::string &line) {
 #endif
     std::fprintf(stdout, "[PS5NM] %s\n", trimmed.c_str());
     std::fflush(stdout);
+    const bool is_error = line.find("failed") != std::string::npos || line.find("Error") != std::string::npos || line.find("error") != std::string::npos;
+    const bool is_warning = line.find("warning") != std::string::npos || line.find("Warning") != std::string::npos;
+    const char* level = is_error ? "ERROR" : (is_warning ? "WARN" : "INFO");
+    const char* component = line.find("[browser]") != std::string::npos ? "browser" :
+        line.find("[notify]") != std::string::npos ? "notification" :
+        line.find("[startup]") != std::string::npos ? "startup" : "payload";
+    ps5nm::LogEvent(level, component, trimmed);
 }
 
 bool IsUsableLanAddress(const in_addr& address) {
@@ -283,7 +291,7 @@ bool LaunchBrowserWithRetries(const std::string &url, int max_attempts = 5, int 
 
 constexpr unsigned int kDefaultPort = 18080;
 constexpr char kServiceName[] = "ps5-network-mounting";
-constexpr char kVersion[] = "1.1.2";
+constexpr char kVersion[] = "1.1.4";
 constexpr int kNetHeapSize = 5 * 1024 * 1024;
 constexpr size_t kMaxBody = 64 * 1024;
 constexpr size_t kMaxHeader = 16 * 1024;
@@ -351,6 +359,7 @@ std::string StatusJson() {
 }
 
 HttpResponse ApiError(unsigned int status, const char* code, const std::string& message) {
+    if (status >= 400) ps5nm::LogEvent("ERROR", "http", std::string(code ? code : "api_error") + ": " + message);
     return {status, "application/json; charset=utf-8",
             "{\"ok\":false,\"error\":" + Quote(code) + ",\"message\":" + Quote(message) + "}", ""};
 }
@@ -376,6 +385,14 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
 
     if (method == "GET" && path == "/api/v1/status")
         return {200, "application/json; charset=utf-8", StatusJson(), "Access-Control-Allow-Origin: *"};
+
+    if (method == "GET" && path == "/api/v1/log") {
+        bool persistent = false;
+        const std::string log = ps5nm::ReadDiagnosticLog(256 * 1024, &persistent);
+        const std::string headers = std::string("Content-Disposition: attachment; filename=\"ps5nm.log\"\r\nX-PS5NM-Log-Persistent: ") +
+            (persistent ? "available" : "session-only") + "\r\n";
+        return {200, "text/plain; charset=utf-8", log.empty() ? "PS5 Network Mounting: no diagnostic events recorded yet.\n" : log, headers};
+    }
 
     // Reject browser state changes from foreign origins. A fixed custom header is
     // not a CSRF token: an attacker can request it through a CORS preflight.
@@ -751,6 +768,7 @@ void* StartupWorker(void* arg) {
 }
 
 int main() {
+    (void)ps5nm::InitDiagnosticLog();
     LogKlog("Initializing PS5 Network Mounting payload");
 
     int net_init_rc = sceNetInit();

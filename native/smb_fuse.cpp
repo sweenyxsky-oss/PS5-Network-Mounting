@@ -1,4 +1,5 @@
 #include "smb_fuse.hpp"
+#include "diagnostic_log.hpp"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -9,6 +10,7 @@
 #include <smb2/libsmb2.h>
 
 #include <cerrno>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <dirent.h>
@@ -50,6 +52,12 @@ bool g_smb_connected = false;
 std::string g_smb_mountpoint;
 std::string g_smb_root;
 std::string g_smb_error;
+std::atomic<unsigned int> g_smb_callback_errors{0};
+void LogSmbCallbackError(const char* operation, const char* path, int rc) {
+    const unsigned int n = g_smb_callback_errors.fetch_add(1, std::memory_order_relaxed);
+    if (n < 10) LogEvent("ERROR", "smb-io", std::string(operation) + " failed for " + (path ? path : "?") + " (rc=" + std::to_string(rc) + ")");
+    else if (n == 10) LogEvent("WARN", "smb-io", "Further SMB callback errors suppressed to keep the log bounded");
+}
 
 bool SafePath(const char* path) {
     if (!path || path[0] != '/') return false;
@@ -101,6 +109,7 @@ int SmbGetattr(const char* path, struct stat* st) {
     const int rc = smb2_stat(g_smb, remote.c_str(), &remote_stat);
     if (rc == 0) FillStat(remote_stat, st);
     pthread_mutex_unlock(&g_smb_lock);
+    if (rc < 0) LogSmbCallbackError("getattr", path, rc);
     return rc;
 }
 
@@ -115,6 +124,7 @@ int SmbReaddir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t off
     struct smb2dir* dir = smb2_opendir(g_smb, remote.c_str());
     if (!dir) {
         pthread_mutex_unlock(&g_smb_lock);
+        LogSmbCallbackError("readdir", path, -EIO);
         return -EIO;
     }
     struct smb2dirent* ent = nullptr;
@@ -145,7 +155,7 @@ int SmbOpen(const char* path, struct fuse_file_info* fi) {
         fi->fh = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fh));
     }
     pthread_mutex_unlock(&g_smb_lock);
-    if (!fh) return -mapped_error;
+    if (!fh) { LogSmbCallbackError("open", path, -mapped_error); return -mapped_error; }
     return 0;
 }
 
@@ -160,6 +170,7 @@ int SmbRead(const char*, char* buf, size_t size, off_t offset, struct fuse_file_
                         static_cast<uint32_t>(size), static_cast<uint64_t>(offset));
     } while (rc == -EAGAIN);
     pthread_mutex_unlock(&g_smb_lock);
+    if (rc < 0) LogSmbCallbackError("read", "<open file>", rc);
     return rc;
 }
 
@@ -283,6 +294,7 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     g_smb = smb2_init_context();
     if (!g_smb) {
         if (error) *error = "libsmb2 could not initialize an SMB context.";
+        LogEvent("ERROR", "smb", error ? *error : "libsmb2 initialization failed");
         return false;
     }
     smb2_set_timeout(g_smb, 30);
@@ -302,6 +314,7 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     if (smb2_connect_share(g_smb, url->server, url->share,
                            username.empty() ? "guest" : username.c_str()) != 0) {
         if (error) *error = std::string("SMB connection or authentication failed: ") + smb2_get_error(g_smb);
+        LogEvent("ERROR", "smb", error ? *error : "SMB connection/authentication failed");
         smb2_destroy_url(url);
         CleanupSmb();
         return false;
@@ -333,13 +346,16 @@ bool StartSmbFuse(const std::string& host, int port, const std::string& share_an
     char* argv[] = {arg0, arg1, arg2, arg3, arg4, arg5, nullptr};
     struct fuse_args args = FUSE_ARGS_INIT(6, argv);
     const int fuse_fd = fuse_mount_compat25(mountpoint.c_str(), &args, &g_smb_ops);
+    int attach_errno = fuse_fd < 0 ? errno : 0;
     g_smb_channel = fuse_fd >= 0 ? fuse_kern_chan_new(fuse_fd) : nullptr;
     if (!g_smb_channel && fuse_fd >= 0) {
+        attach_errno = errno;
         close(fuse_fd);
         (void)UnmountFuseMount(mountpoint.c_str());
     }
     if (!g_smb_channel) {
-        if (error) *error = "FUSE could not attach to /hostapp. Check firmware support and whether another mount owns that path.";
+        if (error) *error = "FUSE could not attach to /hostapp (fuse_mount_compat25 fd=" + std::to_string(fuse_fd) + ", errno=" + std::to_string(attach_errno) + ": " + std::strerror(attach_errno) + "). Check firmware support and whether another mount owns that path.";
+        LogEvent("ERROR", "smb-fuse", error ? *error : "FUSE could not attach SMB at /hostapp");
         fuse_opt_free_args(&args);
         CleanupSmb();
         return false;

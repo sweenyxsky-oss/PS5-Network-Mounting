@@ -104,6 +104,7 @@ The web control panel communicates via JSON endpoints under `/api/v1`:
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/v1/status` | `GET` | Returns live mount status, active protocol, endpoint, and last error. |
+| `/api/v1/log` | `GET` | Downloads the latest bounded diagnostic log as plain text. |
 | `/api/v1/mount` | `POST` | Validates parameters and mounts the requested NFS or SMB share to `/hostapp`. |
 | `/api/v1/unmount` | `POST` | Safely detaches the active FUSE filesystem from `/hostapp`. |
 | `/api/v1/shortcut` | `POST` | Creates the HBRW homebrew folder and requests a ShadowMountPlus scan. |
@@ -122,7 +123,7 @@ g++ -std=c++17 -O2 -Wall -Wextra -Inative tests/test_json.cpp -o /tmp/test_json
 
 # Compile host binary with network stubs
 g++ -std=c++17 -O2 -Wall -Wextra -Inative \
-    native/main.cpp native/mount_backend.cpp tests/net_stubs.cpp \
+    native/main.cpp native/mount_backend.cpp native/shortcut.cpp native/diagnostic_log.cpp tests/net_stubs.cpp \
     -pthread -o /tmp/ps5nm-host
 
 # Run automated HTTP test suite

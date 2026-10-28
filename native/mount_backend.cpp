@@ -1,4 +1,5 @@
 #include "mount_backend.hpp"
+#include "diagnostic_log.hpp"
 
 #if defined(__FreeBSD__) || defined(__ORBIS__) || defined(_ORBIS_)
 #include <sys/mount.h>
@@ -74,8 +75,8 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
                          const std::string& remote_path, const std::string& mountpoint,
                          const std::string& username, const std::string& password,
                          std::string* error) {
-    (void)username;
     (void)password;
+    LogEvent("INFO", "mount", protocol + " mount requested: " + host + ":" + std::to_string(port) + remote_path + " -> " + mountpoint);
 
     if (protocol != "nfs" && protocol != "smb") {
         if (error) *error = "Unsupported protocol. Choose NFS or SMB.";
@@ -160,6 +161,7 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
             status_.last_error = error ? *error : "NFS mount failed.";
             status_.last_result = "NFS mount failed";
             status_.mounted = false;
+            LogEvent("ERROR", "nfs", error ? *error : "NFS mount failed without details");
             return false;
         }
         status_.mounted = true;
@@ -168,6 +170,7 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
         status_.mountpoint = mountpoint;
         status_.last_result = "NFS share mounted read-only.";
         status_.last_error.clear();
+        LogEvent("INFO", "nfs", "NFS share mounted successfully at " + mountpoint);
         return true;
 #else
         if (error) *error = "This build has no PS5 FUSE/NFS adapter. Build with PS5NM_WITH_FUSE=1 and compatible ORBISDEV libraries.";
@@ -188,6 +191,7 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
         status_.last_error = error ? *error : "SMB mount failed.";
         status_.last_result = "SMB mount failed";
         status_.mounted = false;
+        LogEvent("ERROR", "smb", error ? *error : "SMB mount failed without details");
         return false;
     }
     status_.mounted = true;
@@ -196,6 +200,7 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
     status_.mountpoint = mountpoint;
     status_.last_result = "SMB share mounted read-only.";
     status_.last_error.clear();
+    LogEvent("INFO", "smb", "SMB share mounted successfully at " + mountpoint);
     return true;
 #else
     if (error) *error = "This build has no PS5 FUSE/NFS/SMB adapters linked. Build with PS5NM_WITH_FUSE=1 and compatible ORBISDEV libraries.";
@@ -206,6 +211,7 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
 }
 
 bool MountBackend::Unmount(const std::string& mountpoint, std::string* error) {
+    LogEvent("INFO", "mount", "Unmount requested for " + mountpoint);
     if (mountpoint != "/hostapp") {
         if (error) *error = "For safety, this payload only manages the /hostapp mountpoint.";
         return false;

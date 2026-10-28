@@ -4,6 +4,10 @@ The control interface embedded in `web/index.html` communicates with the native 
 
 ## Endpoints
 
+### GET `/api/v1/log`
+Downloads up to the latest 256 KiB of diagnostic events as `text/plain` (`ps5nm.log`). On PS5, the log is persisted at `/data/PS5NetworkMounting/ps5nm.log` and rotated at 512 KiB, retaining one previous file. `X-PS5NM-Log-Persistent` is `available` or `session-only`. The log records service startup, API errors, mount/unmount outcomes, and FUSE attach failures. SMB passwords are never logged.
+
+
 ### 1. GET `/api/v1/status`
 Returns real-time mount state, adapter availability, and diagnostic metrics.
 

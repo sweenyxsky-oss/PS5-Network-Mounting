@@ -1,10 +1,12 @@
 #include "nfs_fuse.hpp"
+#include "diagnostic_log.hpp"
 
 #define FUSE_USE_VERSION 26
 #include <fuse/fuse.h>
 #include <nfsc/libnfs.h>
 
 #include <cerrno>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -49,6 +51,12 @@ bool g_mounted = false;
 bool g_nfs_connected = false;
 std::string g_mountpoint;
 std::string g_last_error;
+std::atomic<unsigned int> g_nfs_callback_errors{0};
+void LogNfsCallbackError(const char* operation, const char* path, int rc) {
+    const unsigned int n = g_nfs_callback_errors.fetch_add(1, std::memory_order_relaxed);
+    if (n < 10) LogEvent("ERROR", "nfs-io", std::string(operation) + " failed for " + (path ? path : "?") + " (rc=" + std::to_string(rc) + ")");
+    else if (n == 10) LogEvent("WARN", "nfs-io", "Further NFS callback errors suppressed to keep the log bounded");
+}
 
 // libnfs releases have used both (offset, count, buffer) and
 // (buffer, count, offset) ordering for the synchronous pread function.
@@ -113,7 +121,7 @@ int FsGetattr(const char* path, struct stat* st) {
     pthread_mutex_lock(&g_lock);
     const int rc = nfs_stat64(g_nfs, remote.c_str(), &ns);
     pthread_mutex_unlock(&g_lock);
-    if (rc < 0) return rc;
+    if (rc < 0) { LogNfsCallbackError("getattr", path, rc); return rc; }
     std::memset(st, 0, sizeof(*st));
     st->st_ino = static_cast<ino_t>(ns.nfs_ino);
     st->st_mode = static_cast<mode_t>(ns.nfs_mode);
@@ -157,6 +165,7 @@ int FsReaddir(const char* path, void* buffer, fuse_fill_dir_t filler, off_t offs
     const int rc = nfs_opendir(g_nfs, remote.c_str(), &dir);
     if (rc < 0) {
         pthread_mutex_unlock(&g_lock);
+        LogNfsCallbackError("readdir", path, rc);
         return rc;
     }
     struct nfsdirent* ent = nullptr;
@@ -176,7 +185,7 @@ int FsOpen(const char* path, struct fuse_file_info* fi) {
     pthread_mutex_lock(&g_lock);
     const int rc = nfs_open(g_nfs, remote.c_str(), O_RDONLY, &fh);
     pthread_mutex_unlock(&g_lock);
-    if (rc < 0) return rc;
+    if (rc < 0) { LogNfsCallbackError("open", path, rc); return rc; }
     fi->fh = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(fh));
     return 0;
 }
@@ -187,6 +196,7 @@ int FsRead(const char*, char* buf, size_t size, off_t offset, struct fuse_file_i
     pthread_mutex_lock(&g_lock);
     const int rc = NfsPreadCompatible(&nfs_pread, g_nfs, fh, buf, size, static_cast<uint64_t>(offset));
     pthread_mutex_unlock(&g_lock);
+    if (rc < 0) LogNfsCallbackError("read", "<open file>", rc);
     return rc;
 }
 
@@ -282,6 +292,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
     g_nfs = nfs_init_context();
     if (!g_nfs) {
         if (error) *error = "libnfs could not initialize an NFS context.";
+        LogEvent("ERROR", "nfs", error ? *error : "libnfs initialization failed");
         return false;
     }
     g_url = nfs_parse_url_dir(g_nfs, url.c_str());
@@ -293,6 +304,7 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
     const int nrc = nfs_mount(g_nfs, g_url->server, g_url->path);
     if (nrc != 0) {
         if (error) *error = std::string("NFS export mount failed: ") + nfs_get_error(g_nfs);
+        LogEvent("ERROR", "nfs", error ? *error : "NFS export mount failed");
         CleanupNfs();
         return false;
     }
@@ -321,13 +333,16 @@ bool StartNfsFuse(const std::string& host, int port, const std::string& export_p
     char* argv[] = {arg0, arg1, arg2, arg3, arg4, arg5, nullptr};
     struct fuse_args args = FUSE_ARGS_INIT(6, argv);
     const int fuse_fd = fuse_mount_compat25(mountpoint.c_str(), &args, &g_ops);
+    int attach_errno = fuse_fd < 0 ? errno : 0;
     g_channel = fuse_fd >= 0 ? fuse_kern_chan_new(fuse_fd) : nullptr;
     if (!g_channel && fuse_fd >= 0) {
+        attach_errno = errno;
         close(fuse_fd);
         (void)UnmountFuseMount(mountpoint.c_str());
     }
     if (!g_channel) {
-        if (error) *error = "FUSE could not attach to /hostapp. Check firmware support and whether another mount owns that path.";
+        if (error) *error = "FUSE could not attach to /hostapp (fuse_mount_compat25 fd=" + std::to_string(fuse_fd) + ", errno=" + std::to_string(attach_errno) + ": " + std::strerror(attach_errno) + "). Check firmware support and whether another mount owns that path.";
+        LogEvent("ERROR", "nfs-fuse", error ? *error : "FUSE could not attach NFS at /hostapp");
         fuse_opt_free_args(&args);
         CleanupNfs();
         return false;

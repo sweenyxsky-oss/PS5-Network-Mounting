@@ -52,6 +52,7 @@ env["PS5NM_BIND"] = "127.0.0.1"
 env["PS5NM_NO_BROWSER"] = "1"
 homebrew = tempfile.TemporaryDirectory(prefix="ps5nm-homebrew-")
 env["PS5NM_HOME_BREW_DIR"] = homebrew.name
+env["PS5NM_LOG_DIR"] = homebrew.name
 env["PS5NM_LAUNCHER_ELF"] = "/tmp/ps5nm-host"
 proc = subprocess.Popen(["/tmp/ps5nm-host"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -72,11 +73,16 @@ try:
     assert status["mounted"] is False
     assert status["mountpoint"] == "/hostapp"
     assert status["service"] == "ps5-network-mounting"
-    assert status["version"] == "1.1.2"
+    assert status["version"] == "1.1.4"
     assert status["port"] == PORT
     assert status["url"].endswith(f":{PORT}")
     assert isinstance(status["urls"], list)
     assert status["browser_launched"] is False
+
+    # Persistent/session diagnostics are downloadable over the same API.
+    code, raw_log = request("/api/v1/log")
+    assert code == 200
+    assert b"Initializing PS5 Network Mounting payload" in raw_log
 
     # HTML page delivery
     code, page = request("/?cache=1")
@@ -141,6 +147,9 @@ try:
     # Malformed JSON body
     code, raw = request("/api/v1/mount", "POST", '{"protocol": "nfs", "unclosed": ')
     assert code == 400 and json.loads(raw)["error"] == "invalid_json"
+
+    code, raw_log = request("/api/v1/log")
+    assert code == 200 and b"invalid_json" in raw_log and b"[ERROR]" in raw_log
 
     # Trailing garbage after valid JSON
     code, raw = request("/api/v1/mount", "POST", '{"protocol": "nfs"} trailing_garbage')

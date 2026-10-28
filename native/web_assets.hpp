@@ -395,6 +395,8 @@ footer {
           <button class="btn-primary" id="connectBtn" type="submit">Connect &amp; Mount</button>
           <button class="btn-danger" id="disconnectBtn" type="button" disabled>Disconnect</button>
           <button class="btn-secondary" id="refreshBtn" type="button">Refresh Status</button>
+
+          <button class="btn-secondary" id="errorLogBtn" type="button">Download Error Log</button>
           <button class="btn-secondary" id="browserBtn" type="button">Open Console Browser</button>
           <button class="btn-secondary" id="shortcutBtn" type="button">Add Home Screen Shortcut</button>
         </div>
@@ -540,6 +542,29 @@ footer {
   $('remotePath').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('port').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('refreshBtn').addEventListener('click', refresh);
+  $('errorLogBtn').addEventListener('click', async () => {
+    const btn = $('errorLogBtn');
+    btn.disabled = true;
+    try {
+      const response = await fetch('/api/v1/log', { cache: 'no-store' });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'ps5nm.log';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const persistent = response.headers.get('X-PS5NM-Log-Persistent') === 'available';
+      setNotice(persistent ? 'Diagnostic log downloaded. The payload also keeps a rotating copy on the PS5.' : 'Diagnostic log downloaded from this session. Persistent storage is unavailable; check PS5 /data access.', persistent ? 'ok' : 'info');
+    } catch (err) {
+      setNotice('Could not download diagnostic log: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
   $('browserBtn').addEventListener('click', async () => {
     $('browserBtn').disabled = true;
     setNotice('Opening the PS5 console browser…', 'info');
