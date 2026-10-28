@@ -409,7 +409,7 @@ bool StopSmbFuse(const std::string& mountpoint, std::string* error) {
         return false;
     }
     pthread_mutex_unlock(&g_smb_lock);
-    if (UnmountFuseMount(mountpoint.c_str()) != 0) {
+    if (UnmountFuseMount(mountpoint.c_str()) != 0 && errno != EINVAL && errno != ENOENT) {
         if (error) *error = std::string("Kernel FUSE unmount failed: ") + std::strerror(errno);
         return false;
     }

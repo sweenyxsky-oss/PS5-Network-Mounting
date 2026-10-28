@@ -26,7 +26,7 @@ jobs:
           /tmp/test_json
       - name: Compile host API smoke-test binary
         run: |
-          g++ -std=c++17 -O2 -Wall -Wextra -Inative native/main.cpp native/mount_backend.cpp tests/net_stubs.cpp -pthread -o /tmp/ps5nm-host
+          g++ -std=c++17 -O2 -Wall -Wextra -Inative native/main.cpp native/mount_backend.cpp native/shortcut.cpp tests/net_stubs.cpp -pthread -o /tmp/ps5nm-host
       - name: Test HTTP API behavior
         run: python tests/http_smoke.py
       - uses: actions/checkout@v4

@@ -1,10 +1,56 @@
 #include "mount_backend.hpp"
+
+#if defined(__FreeBSD__) || defined(__ORBIS__) || defined(_ORBIS_)
+#include <sys/mount.h>
+#include <sys/param.h>
+#else
+#include <linux/magic.h>
+#include <sys/mount.h>
+#include <sys/vfs.h>
+#endif
+#include <cerrno>
+#include <cstring>
+
 #ifdef PS5NM_WITH_FUSE
 #include "nfs_fuse.hpp"
 #include "smb_fuse.hpp"
 #endif
 
 namespace ps5nm {
+namespace {
+bool IsFuseMount(const struct statfs& mount_info) {
+#if defined(__FreeBSD__) || defined(__ORBIS__) || defined(_ORBIS_)
+    return std::strcmp(mount_info.f_fstypename, "fusefs") == 0 ||
+           std::strcmp(mount_info.f_fstypename, "fuse") == 0;
+#else
+    return static_cast<unsigned long>(mount_info.f_type) == FUSE_SUPER_MAGIC;
+#endif
+}
+} // namespace
+
+bool MountBackend::RecoverStaleMount(std::string* error) {
+#ifdef PS5NM_WITH_FUSE
+    if (NfsFuseIsMounted() || SmbFuseIsMounted()) return true;
+#endif
+    struct statfs mount_info{};
+    if (statfs("/hostapp", &mount_info) != 0) {
+        if (errno == ENOENT) return true;
+        if (error) *error = std::string("Cannot inspect /hostapp mount state: ") + std::strerror(errno);
+        status_.last_error = error ? *error : "Cannot inspect /hostapp mount state.";
+        status_.last_result = "Mount recovery failed";
+        return false;
+    }
+    if (!IsFuseMount(mount_info)) return true;
+#if defined(__ORBIS__) || defined(_ORBIS_)
+    if (unmount("/hostapp", MNT_FORCE) == 0) return true;
+#else
+    if (umount2("/hostapp", 0) == 0) return true;
+#endif
+    if (error) *error = std::string("Cannot detach stale FUSE mount at /hostapp: ") + std::strerror(errno);
+    status_.last_error = error ? *error : "Cannot detach stale FUSE mount.";
+    status_.last_result = "Mount recovery failed";
+    return false;
+}
 
 MountStatus MountBackend::Status() const {
     MountStatus current = status_;
@@ -37,21 +83,43 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
         status_.last_result = "Mount rejected";
         return false;
     }
-    if (status_.mounted) {
-        if (error) *error = "A network share is already mounted. Disconnect it before connecting another share.";
-        status_.last_error = error ? *error : "Another share is mounted.";
-        status_.last_result = "Mount rejected";
-        return false;
-    }
 #ifdef PS5NM_WITH_FUSE
-    if ((status_.protocol == "nfs" && NfsFuseIsMounted()) ||
-        (status_.protocol == "smb" && SmbFuseIsMounted())) {
+    if (status_.mounted && status_.protocol == "nfs" && !NfsFuseIsMounted()) {
+        if (!StopNfsFuse("/hostapp", error) && !RecoverStaleMount(error)) {
+            status_.last_error = error ? *error : "Stale NFS mount cleanup failed.";
+            status_.last_result = "Mount recovery failed";
+            return false;
+        }
+        status_.mounted = false;
+        status_.protocol.clear();
+        status_.endpoint.clear();
+        status_.last_result = "Stale NFS mount cleaned up";
+    }
+    if (status_.mounted && status_.protocol == "smb" && !SmbFuseIsMounted()) {
+        if (!StopSmbFuse("/hostapp", error) && !RecoverStaleMount(error)) {
+            status_.last_error = error ? *error : "Stale SMB mount cleanup failed.";
+            status_.last_result = "Mount recovery failed";
+            return false;
+        }
+        status_.mounted = false;
+        status_.protocol.clear();
+        status_.endpoint.clear();
+        status_.last_result = "Stale SMB mount cleaned up";
+    }
+    if (NfsFuseIsMounted() || SmbFuseIsMounted()) {
         if (error) *error = "A network share is already mounted. Disconnect it before connecting another share.";
         status_.last_error = error ? *error : "Another share is mounted.";
         status_.last_result = "Mount rejected";
         return false;
     }
 #endif
+    if (!RecoverStaleMount(error)) return false;
+    if (status_.mounted) {
+        if (error) *error = "A network share is already mounted. Disconnect it before connecting another share.";
+        status_.last_error = error ? *error : "Another share is mounted.";
+        status_.last_result = "Mount rejected";
+        return false;
+    }
     if (mountpoint != "/hostapp") {
         if (error) *error = "For safety, this payload only manages /hostapp.";
         status_.last_error = error ? *error : "Unsafe mountpoint.";
@@ -143,11 +211,13 @@ bool MountBackend::Unmount(const std::string& mountpoint, std::string* error) {
         return false;
     }
 #ifdef PS5NM_WITH_FUSE
-    if (status_.protocol == "nfs" && (status_.mounted || NfsFuseIsMounted())) {
-        if (!StopNfsFuse(mountpoint, error)) {
-            status_.last_error = error ? *error : "NFS unmount failed.";
-            status_.last_result = "Unmount failed";
-            return false;
+    if (status_.protocol == "nfs") {
+        if (NfsFuseIsMounted() || status_.mounted) {
+            if (!StopNfsFuse(mountpoint, error) && !RecoverStaleMount(error)) {
+                status_.last_error = error ? *error : "NFS unmount failed.";
+                status_.last_result = "Unmount failed";
+                return false;
+            }
         }
         status_.mounted = false;
         status_.protocol.clear();
@@ -156,11 +226,13 @@ bool MountBackend::Unmount(const std::string& mountpoint, std::string* error) {
         status_.last_error.clear();
         return true;
     }
-    if (status_.protocol == "smb" && (status_.mounted || SmbFuseIsMounted())) {
-        if (!StopSmbFuse(mountpoint, error)) {
-            status_.last_error = error ? *error : "SMB unmount failed.";
-            status_.last_result = "Unmount failed";
-            return false;
+    if (status_.protocol == "smb") {
+        if (SmbFuseIsMounted() || status_.mounted) {
+            if (!StopSmbFuse(mountpoint, error) && !RecoverStaleMount(error)) {
+                status_.last_error = error ? *error : "SMB unmount failed.";
+                status_.last_result = "Unmount failed";
+                return false;
+            }
         }
         status_.mounted = false;
         status_.protocol.clear();

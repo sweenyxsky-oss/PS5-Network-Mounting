@@ -26,6 +26,13 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v4
 
+      - name: Check out the PS5 SDK maintained by this organization
+        uses: actions/checkout@v4
+        with:
+          repository: sweenyxsky-oss/sdk
+          ref: master
+          path: deps/ps5-payload-sdk
+
       - name: Install PS5 library build host dependencies
         run: |
           set -eux
@@ -38,6 +45,26 @@ jobs:
           set -eux
           git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo.git /tmp/pacbrew-repo
           cd /tmp/pacbrew-repo
+          # Build the organization-maintained SDK checkout rather than pulling
+          # the upstream SDK source through pacbrew's default package recipe.
+          python3 - <<'PY'
+          from pathlib import Path
+          recipe = Path("sdk/PKGBUILD")
+          contents = recipe.read_text()
+          contents = contents.replace(
+              "https://github.com/ps5-payload-dev/sdk.git",
+              "https://github.com/sweenyxsky-oss/sdk.git",
+          )
+          contents = contents.replace(
+              "git describe --tags --long | sed 's/^[^0-9]*//; s/\\([^-]*-g\\)/r\\1/; s/-/./g'",
+              "printf '1.0.r%s.g%s' \"$(git rev-list --count HEAD)\" \"$(git rev-parse --short HEAD)\"",
+          )
+          if "https://github.com/sweenyxsky-oss/sdk.git" not in contents:
+              raise SystemExit("failed to select the organization SDK source")
+          if "git describe --tags --long" in contents:
+              raise SystemExit("SDK package version still requires upstream tags")
+          recipe.write_text(contents)
+          PY
           # Build only target libraries used by this payload. ci-libs.sh also builds
           # unrelated graphics, media, and UI stacks and can consume the entire job timeout.
           for package in sdk openlibm libcxx zlib openssl libnfs libsmb2; do
@@ -133,27 +160,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
-          TAG="v1.1.1"
-          TITLE="PS5 Network Mounting v1.1.1"
+          TAG="v1.1.2"
+          TITLE="PS5 Network Mounting v1.1.2"
           cat <<'NOTES' > /tmp/release_notes.md
-          ## PS5 Network Mounting v1.1.1
+          ## PS5 Network Mounting v1.1.2
 
-          ### Fixes & Diagnostics in v1.1.1
-          - **Resilient Startup & Port Retries**: Added 10-attempt socket bind/listen retry loop with detailed klog diagnostics. Detects if port 18080 is already active from a previous execution, triggers WebKit/toast refresh, and exits cleanly.
-          - **WebKit & Toast Startup Worker**: Decoupled WebKit browser launch and toast notifications into an asynchronous background worker with a 300ms settling pause and multi-attempt retry logic.
-          - **UserService Initialization**: Explicitly initializes `sceUserService` prior to `sceSystemServiceLaunchWebBrowser`.
-          - **Dual Toast Delivery**: Supports both plain `sceKernelSendNotificationRequest` and rich `sceNotificationSend` notifications.
-          - **Kernel Syslog Diagnostics**: Emits `<118>[PS5NM]` diagnostic logs directly to PS5 klog via `sendsyslog`.
+          ### Fixes and improvements
+          - Bind the control server to all interfaces by default and report reachable console URLs for LAN clients.
+          - Verify a running instance before treating a port conflict as a relaunch; unrelated listeners are reported as errors.
+          - Launch or refresh the console browser with retry handling, and expose browser status and a manual launch action in the control panel.
+          - Create a home-screen shortcut with an embedded PS5 launcher, metadata, and icon; request a ShadowMountPlus scan when its API is available.
+          - Recover stale FUSE mounts and clean up active mounts when the payload exits.
 
-          ### Highlights & Core Capabilities
-          - **Auto-open WebKit Browser**: On payload launch, automatically opens the PS5 WebKit browser modal pointing directly to the web UI at `http://<PS5-IP>:18080`.
-          - **On-Screen PS5 Toast Notification**: Displays a ProsperoMgr-style on-screen notification showing the payload version and listening network address and port.
-          - **Background Daemon**: Resilient network initialization that keeps running smoothly even if `sceNetInit` was already initialized by the payload loader.
-          - **Full NFS & SMB FUSE Mount**: Support for NFS (v3/v4) and SMB (SMB2/SMB3) network shares mounted to `/hostapp` or designated mount paths.
-          - **ProsperoMgr-inspired Dark Theme UI**: Full remote control from PS5 browser or PC/phone on the LAN.
-
-          ### Included Artifacts
-          - `PS5NetworkMounting.elf`: Full standalone PS5 homebrew payload with NFS and SMB FUSE adapters included.
+          ### Included artifact
+          - `PS5NetworkMounting.elf`: PS5 payload built with the organization-maintained SDK and NFS/SMB FUSE adapters.
           NOTES
           sed -i 's/^          //' /tmp/release_notes.md
 

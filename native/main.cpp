@@ -10,17 +10,23 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <pthread.h>
 #include <cstdio>
 #include <map>
+#include <sys/select.h>
 
 #include "json.hpp"
 #include "mount_backend.hpp"
+#include "shortcut.hpp"
 #include "web_assets.hpp"
 
 extern "C" {
@@ -57,25 +63,56 @@ void LogKlog(const std::string &line) {
     std::fflush(stdout);
 }
 
-std::string LocalIp() {
-    std::string ip = "127.0.0.1";
+bool IsUsableLanAddress(const in_addr& address) {
+    const uint32_t host = ntohl(address.s_addr);
+    const unsigned int first = (host >> 24) & 0xff;
+    const unsigned int second = (host >> 16) & 0xff;
+    return host != INADDR_ANY && first != 0 && first != 127 && first < 224 &&
+        !(first == 169 && second == 254);
+}
+
+std::vector<std::string> LocalIps() {
+    std::vector<std::string> ips;
     ifaddrs *list = nullptr;
-    if (getifaddrs(&list) != 0 || !list) return ip;
-
+    if (getifaddrs(&list) != 0 || !list) return ips;
     for (ifaddrs *ifa = list; ifa; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
-        if (std::strncmp(ifa->ifa_name, "lo", 2) == 0) continue;
-
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET ||
+            !(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) continue;
+        const auto *addr = reinterpret_cast<const sockaddr_in *>(ifa->ifa_addr);
+        if (!IsUsableLanAddress(addr->sin_addr)) continue;
         char buf[INET_ADDRSTRLEN];
-        auto *addr = reinterpret_cast<sockaddr_in *>(ifa->ifa_addr);
-        if (inet_ntop(AF_INET, &addr->sin_addr, buf, sizeof(buf))) {
-            ip = buf;
-            break;
-        }
+        if (!inet_ntop(AF_INET, &addr->sin_addr, buf, sizeof(buf))) continue;
+        const std::string value(buf);
+        if (std::find(ips.begin(), ips.end(), value) == ips.end()) ips.push_back(value);
     }
-
     freeifaddrs(list);
-    return ip;
+    return ips;
+}
+
+std::string LocalIp() {
+    // Let the kernel select the address on the default route; UDP connect sends no packet.
+    const int route_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (route_socket >= 0) {
+        sockaddr_in destination{};
+        destination.sin_family = AF_INET;
+        destination.sin_port = htons(9);
+        (void)inet_pton(AF_INET, "192.0.2.1", &destination.sin_addr);
+        if (connect(route_socket, reinterpret_cast<sockaddr*>(&destination), sizeof(destination)) == 0) {
+            sockaddr_in local{};
+            socklen_t size = sizeof(local);
+            if (getsockname(route_socket, reinterpret_cast<sockaddr*>(&local), &size) == 0 &&
+                IsUsableLanAddress(local.sin_addr)) {
+                char buf[INET_ADDRSTRLEN];
+                if (inet_ntop(AF_INET, &local.sin_addr, buf, sizeof(buf))) {
+                    close(route_socket);
+                    return buf;
+                }
+            }
+        }
+        close(route_socket);
+    }
+    const auto ips = LocalIps();
+    return ips.empty() ? "127.0.0.1" : ips.front();
 }
 
 bool InitUserService() {
@@ -245,6 +282,8 @@ bool LaunchBrowserWithRetries(const std::string &url, int max_attempts = 5, int 
 }
 
 constexpr unsigned int kDefaultPort = 18080;
+constexpr char kServiceName[] = "ps5-network-mounting";
+constexpr char kVersion[] = "1.1.2";
 constexpr int kNetHeapSize = 5 * 1024 * 1024;
 constexpr size_t kMaxBody = 64 * 1024;
 constexpr size_t kMaxHeader = 16 * 1024;
@@ -252,6 +291,12 @@ constexpr int kMaxConcurrentClients = 32;
 
 ps5nm::MountBackend g_mount;
 pthread_mutex_t g_mount_api_lock = PTHREAD_MUTEX_INITIALIZER;
+std::atomic<bool> g_browser_launched{false};
+volatile sig_atomic_t g_server_socket = -1;
+volatile sig_atomic_t g_stop_requested = 0;
+unsigned int g_server_port = kDefaultPort;
+std::string g_server_bind = "0.0.0.0";
+std::string g_server_url = "http://127.0.0.1:18080";
 pthread_mutex_t g_client_count_lock = PTHREAD_MUTEX_INITIALIZER;
 int g_active_clients = 0;
 
@@ -284,12 +329,24 @@ std::string StatusJson() {
     pthread_mutex_lock(&g_mount_api_lock);
     const auto s = g_mount.Status();
     pthread_mutex_unlock(&g_mount_api_lock);
-    return "{\"state\":\"ready\",\"mounted\":" +
-        std::string(s.mounted ? "true" : "false") + ",\"can_disconnect\":" +
-        std::string(s.can_disconnect ? "true" : "false") + ",\"protocol\":" +
-        (s.protocol.empty() ? "null" : Quote(s.protocol)) + ",\"endpoint\":" +
-        (s.endpoint.empty() ? "null" : Quote(s.endpoint)) + ",\"mountpoint\":" +
-        Quote(s.mountpoint) + ",\"last_result\":" + Quote(s.last_result) +
+
+    const auto ips = g_server_bind == "0.0.0.0"
+        ? LocalIps() : std::vector<std::string>{g_server_bind};
+    std::string urls = "[";
+    for (size_t i = 0; i < ips.size(); ++i) {
+        if (i) urls += ",";
+        urls += Quote("http://" + ips[i] + ":" + std::to_string(g_server_port));
+    }
+    urls += "]";
+    return "{\"state\":\"ready\",\"service\":" + Quote(kServiceName) +
+        ",\"version\":" + Quote(kVersion) + ",\"port\":" + std::to_string(g_server_port) +
+        ",\"url\":" + Quote(g_server_url) + ",\"urls\":" + urls +
+        ",\"browser_launched\":" + std::string(g_browser_launched.load() ? "true" : "false") +
+        ",\"mounted\":" + std::string(s.mounted ? "true" : "false") +
+        ",\"can_disconnect\":" + std::string(s.can_disconnect ? "true" : "false") +
+        ",\"protocol\":" + (s.protocol.empty() ? "null" : Quote(s.protocol)) +
+        ",\"endpoint\":" + (s.endpoint.empty() ? "null" : Quote(s.endpoint)) +
+        ",\"mountpoint\":" + Quote(s.mountpoint) + ",\"last_result\":" + Quote(s.last_result) +
         ",\"last_error\":" + (s.last_error.empty() ? "null" : Quote(s.last_error)) + "}";
 }
 
@@ -320,23 +377,19 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
     if (method == "GET" && path == "/api/v1/status")
         return {200, "application/json; charset=utf-8", StatusJson(), "Access-Control-Allow-Origin: *"};
 
-    // Security / CSRF check for state-mutating POST requests:
-    // If an Origin header is present from a foreign origin and no custom header is set, reject.
+    // Reject browser state changes from foreign origins. A fixed custom header is
+    // not a CSRF token: an attacker can request it through a CORS preflight.
     if (method == "POST") {
-        auto origin_it = headers.find("origin");
-        auto requested_with_it = headers.find("x-requested-with");
-        if (origin_it != headers.end() && !origin_it->second.empty()) {
-            // If cross-origin request without our custom token header, block
-            auto host_it = headers.find("host");
+        const auto origin_it = headers.find("origin");
+        if (origin_it != headers.end()) {
+            const auto host_it = headers.find("host");
             std::string origin = origin_it->second;
-            // Strip protocol from origin
-            size_t pos = origin.find("://");
-            if (pos != std::string::npos) origin = origin.substr(pos + 3);
-            if (host_it != headers.end() && origin != host_it->second) {
-                if (requested_with_it == headers.end() || requested_with_it->second != "PS5NM") {
-                    return ApiError(403, "forbidden_origin", "Cross-origin request rejected without authorization header.");
-                }
-            }
+            const size_t scheme = origin.find("://");
+            if (scheme != std::string::npos) origin.erase(0, scheme + 3);
+            const size_t path = origin.find_first_of("/?#");
+            if (path != std::string::npos) origin.resize(path);
+            if (host_it == headers.end() || origin.empty() || origin != host_it->second)
+                return ApiError(403, "forbidden_origin", "Cross-origin state-changing requests are not allowed.");
         }
     }
 
@@ -390,17 +443,40 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
 
     if (method == "POST" && path == "/api/v1/browser") {
         ps5nm::JsonValue req;
-        std::string url;
-        if (ps5nm::JsonValue::Parse(body, req) && req.IsObject() && req.Has("url")) {
-            url = req.GetString("url");
-        }
-        if (url.empty()) {
-            const std::string local_ip = LocalIp();
-            url = "http://" + local_ip + ":" + std::to_string(kDefaultPort);
-        }
+        std::string url = g_server_url;
+        if (!body.empty() && (!ps5nm::JsonValue::Parse(body, req) || !req.IsObject()))
+            return ApiError(400, "invalid_json", "Browser request must be a JSON object.");
+        if (req.IsObject() && req.Has("url")) url = req.GetString("url");
+        if (url.size() > 2048 || (url.compare(0, 7, "http://") != 0 && url.compare(0, 8, "https://") != 0) ||
+            url.find_first_of("\r\n") != std::string::npos)
+            return ApiError(400, "invalid_url", "Browser URL must be an HTTP or HTTPS URL without line breaks.");
         const bool launched = LaunchBrowserWithRetries(url, 3, 500);
+        g_browser_launched.store(launched);
+        if (!launched)
+            return ApiError(502, "browser_launch_failed", "PS5 WebKit could not open " + url + ". Open this URL manually in the console browser.");
         return {200, "application/json; charset=utf-8",
-                std::string("{\"ok\":") + (launched ? "true" : "false") + ",\"url\":" + Quote(url) + "}", "Access-Control-Allow-Origin: *"};
+                "{\"ok\":true,\"url\":" + Quote(url) + "}", "Access-Control-Allow-Origin: *"};
+    }
+
+    if (method == "POST" && path == "/api/v1/shortcut") {
+        ps5nm::JsonValue req;
+        if (!body.empty() && (!ps5nm::JsonValue::Parse(body, req) || !req.IsObject()))
+            return ApiError(400, "invalid_json", "Shortcut request must be a JSON object.");
+        std::string launcher;
+#ifndef PS5NM_EMBED_LAUNCHER_ELF
+        launcher = req.IsObject() ? req.GetString("launcher_elf") : std::string();
+        if (launcher.empty()) {
+            const char* configured = std::getenv("PS5NM_LAUNCHER_ELF");
+            if (configured) launcher = configured;
+        }
+#endif
+        const auto created = ps5nm::CreateHomeScreenShortcut(launcher);
+        const std::string response = "{\"ok\":" + std::string(created.success ? "true" : "false") +
+            ",\"path\":" + Quote(created.path) + ",\"shadow_mountplus_detected\":" +
+            std::string(created.shadow_mountplus_detected ? "true" : "false") +
+            ",\"message\":" + Quote(created.message) + "}";
+        return {created.http_status, "application/json; charset=utf-8", response,
+                "Access-Control-Allow-Origin: *"};
     }
 
     if (method == "POST" && path == "/api/v1/notify") {
@@ -445,6 +521,7 @@ const char* Reason(unsigned int status) {
     case 413: return "Payload Too Large";
     case 431: return "Request Header Fields Too Large";
     case 500: return "Internal Server Error";
+    case 502: return "Bad Gateway";
     case 503: return "Service Unavailable";
     default: return "Internal Server Error";
     }
@@ -598,6 +675,62 @@ struct StartupWorkerArgs {
     std::string toast_message;
 };
 
+void StopSignalHandler(int signal_number) {
+    (void)signal_number;
+    g_stop_requested = 1;
+}
+
+bool ProbeRunningService(const char* address, unsigned int port, std::string* url) {
+    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    timeval timeout{2, 0};
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    sockaddr_in endpoint{};
+    endpoint.sin_family = AF_INET;
+    endpoint.sin_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET, address, &endpoint.sin_addr) != 1 ||
+        connect(fd, reinterpret_cast<sockaddr*>(&endpoint), sizeof(endpoint)) != 0) {
+        close(fd);
+        return false;
+    }
+    static const char request[] = "GET /api/v1/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    size_t sent = 0;
+    while (sent < sizeof(request) - 1) {
+        const ssize_t count = send(fd, request + sent, sizeof(request) - 1 - sent, 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            close(fd);
+            return false;
+        }
+        sent += static_cast<size_t>(count);
+    }
+    std::string response;
+    char buffer[2048];
+    for (;;) {
+        const ssize_t count = recv(fd, buffer, sizeof(buffer), 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        response.append(buffer, static_cast<size_t>(count));
+        if (response.size() > 16384) break;
+    }
+    close(fd);
+    const auto body_pos = response.find("\r\n\r\n");
+    if (response.compare(0, 12, "HTTP/1.1 200") != 0 || body_pos == std::string::npos ||
+        response.find("\"service\":\"ps5-network-mounting\"", body_pos + 4) == std::string::npos)
+        return false;
+    if (url) {
+        const std::string marker = "\"url\":\"";
+        const auto start = response.find(marker, body_pos + 4);
+        if (start != std::string::npos) {
+            const auto value_start = start + marker.size();
+            const auto end = response.find('\"', value_start);
+            if (end != std::string::npos) *url = response.substr(value_start, end - value_start);
+        }
+    }
+    return true;
+}
+
 void* StartupWorker(void* arg) {
     auto* args = reinterpret_cast<StartupWorkerArgs*>(arg);
     LogKlog("[startup] Background startup worker began; waiting 300ms for system services to settle");
@@ -606,8 +739,12 @@ void* StartupWorker(void* arg) {
     LogKlog("[startup] Sending startup notification toast");
     SendToastWithRetries(args->toast_message, 5, 500);
 
-    LogKlog("[startup] Launching WebKit browser pointing to " + args->web_url);
-    LaunchBrowserWithRetries(args->web_url, 5, 1000);
+    if (std::getenv("PS5NM_NO_BROWSER") == nullptr || std::strcmp(std::getenv("PS5NM_NO_BROWSER"), "1") != 0) {
+        LogKlog("[startup] Launching WebKit browser pointing to " + args->web_url);
+        g_browser_launched.store(LaunchBrowserWithRetries(args->web_url, 5, 1000));
+    } else {
+        LogKlog("[startup] Automatic browser launch disabled by PS5NM_NO_BROWSER=1");
+    }
 
     delete args;
     return nullptr;
@@ -643,21 +780,25 @@ int main() {
     // and from any PC/phone on the LAN using the PS5 IP address.
     const char* bind_ip = std::getenv("PS5NM_BIND");
     if (!bind_ip || !*bind_ip) bind_ip = "0.0.0.0";
+    g_server_port = port;
+    g_server_bind = bind_ip;
+    const std::string local_ip = g_server_bind == "0.0.0.0" ? LocalIp() : g_server_bind;
+    const std::string web_url = "http://" + local_ip + ":" + std::to_string(port);
+    g_server_url = web_url;
 
     (void)signal(SIGPIPE, SIG_IGN);
+    (void)signal(SIGTERM, StopSignalHandler);
+    (void)signal(SIGINT, StopSignalHandler);
     const int server = socket(AF_INET, SOCK_STREAM, 0);
     if (server < 0) {
         char buf[128];
         std::snprintf(buf, sizeof(buf), "socket creation failed (errno %d: %s)", errno, std::strerror(errno));
         LogKlog(buf);
-        (void)sceNetPoolDestroy(net_pool);
+        if (net_pool >= 0) (void)sceNetPoolDestroy(net_pool);
         return 2;
     }
     int reuse = 1;
     (void)setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-    (void)setsockopt(server, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
-#endif
 #ifdef SO_NOSIGPIPE
     (void)setsockopt(server, SOL_SOCKET, SO_NOSIGPIPE, &reuse, sizeof(reuse));
 #endif
@@ -668,7 +809,7 @@ int main() {
     if (inet_pton(AF_INET, bind_ip, &addr.sin_addr) != 1) {
         LogKlog("inet_pton failed for bind_ip=" + std::string(bind_ip));
         close(server);
-        (void)sceNetPoolDestroy(net_pool);
+        if (net_pool >= 0) (void)sceNetPoolDestroy(net_pool);
         return 3;
     }
 
@@ -681,56 +822,55 @@ int main() {
             break;
         }
 
-        int bind_err = errno;
+        const int bind_err = errno;
         char buf[192];
         std::snprintf(buf, sizeof(buf), "bind/listen attempt %d/%d on %s:%u failed (errno %d: %s)",
                       attempt, kMaxBindAttempts, bind_ip, port, bind_err, std::strerror(bind_err));
         LogKlog(buf);
 
-        if (attempt < kMaxBindAttempts) {
+        if (attempt < kMaxBindAttempts && (bind_err == EADDRINUSE || bind_err == EADDRNOTAVAIL))
             usleep(500 * 1000);
-        }
+        else if (bind_err != EADDRINUSE && bind_err != EADDRNOTAVAIL)
+            break;
     }
-
-    const std::string local_ip = LocalIp();
-    const std::string web_url = "http://" + local_ip + ":" + std::to_string(port);
 
     if (!bound) {
         LogKlog("bind/listen failed permanently on " + std::string(bind_ip) + ":" + std::to_string(port));
         close(server);
 
-        // Check if port is already active (another instance running)
-        int probe = socket(AF_INET, SOCK_STREAM, 0);
-        bool already_running = false;
-        if (probe >= 0) {
-            sockaddr_in probe_addr{};
-            probe_addr.sin_family = AF_INET;
-            probe_addr.sin_port = htons(static_cast<uint16_t>(port));
-            inet_pton(AF_INET, "127.0.0.1", &probe_addr.sin_addr);
-            if (connect(probe, reinterpret_cast<sockaddr*>(&probe_addr), sizeof(probe_addr)) == 0) {
-                already_running = true;
-            }
-            close(probe);
+        std::string active_url = web_url;
+        const auto ips = LocalIps();
+        bool already_running = ProbeRunningService("127.0.0.1", port, &active_url);
+        if (!already_running && g_server_bind != "0.0.0.0" && g_server_bind != "127.0.0.1")
+            already_running = ProbeRunningService(g_server_bind.c_str(), port, &active_url);
+        for (const auto& ip : ips) {
+            if (already_running) break;
+            already_running = ProbeRunningService(ip.c_str(), port, &active_url);
         }
 
         if (already_running) {
-            LogKlog("Detected active server already running on port " + std::to_string(port) +
-                    ". Relaunching WebKit and sending notification.");
-            SendToastWithRetries("PS5 Network Mounting v1.1.1\nAlready active: " + web_url, 3, 500);
-            LaunchBrowserWithRetries(web_url, 5, 1000);
-            (void)sceNetPoolDestroy(net_pool);
-            return 0; // Clean exit without error
+            g_server_url = active_url;
+            LogKlog("Verified active PS5 Network Mounting service at " + active_url + "; refreshing its panel");
+            SendToastWithRetries("PS5 Network Mounting v" + std::string(kVersion) + "\nAlready active: " + active_url, 3, 500);
+            if (std::getenv("PS5NM_NO_BROWSER") == nullptr || std::strcmp(std::getenv("PS5NM_NO_BROWSER"), "1") != 0)
+                (void)LaunchBrowserWithRetries(active_url, 5, 1000);
+            if (net_pool >= 0) (void)sceNetPoolDestroy(net_pool);
+            return 0;
         }
 
-        SendToastWithRetries("PS5 Network Mounting Error:\nPort " + std::to_string(port) + " in use!", 3, 500);
-        (void)sceNetPoolDestroy(net_pool);
+        SendToastWithRetries("PS5 Network Mounting Error:\nCould not bind port " + std::to_string(port), 3, 500);
+        if (net_pool >= 0) (void)sceNetPoolDestroy(net_pool);
         return 3;
     }
+
+    std::string recovery_error;
+    if (!g_mount.RecoverStaleMount(&recovery_error))
+        LogKlog("Startup mount recovery failed: " + recovery_error);
 
     LogKlog("Listening on " + std::string(bind_ip) + ":" + std::to_string(port) + " (URL: " + web_url + ")");
 
     // Spawn background startup worker to dispatch toast & browser without delaying the accept loop
-    auto* startup_args = new StartupWorkerArgs{web_url, "PS5 Network Mounting v1.1.1\nListening on: " + web_url};
+    auto* startup_args = new StartupWorkerArgs{web_url, "PS5 Network Mounting v" + std::string(kVersion) + "\nListening on: " + web_url};
     pthread_t startup_tid;
     if (pthread_create(&startup_tid, nullptr, StartupWorker, startup_args) == 0) {
         pthread_detach(startup_tid);
@@ -739,11 +879,24 @@ int main() {
     }
 
     for (;;) {
+        fd_set read_set;
+        FD_ZERO(&read_set);
+        FD_SET(server, &read_set);
+        timeval wait{1, 0};
+        const int ready = select(server + 1, &read_set, nullptr, nullptr, &wait);
+        if (g_stop_requested) break;
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            LogKlog("select on HTTP listener failed (errno " + std::to_string(errno) + ")");
+            break;
+        }
+        if (ready == 0) continue;
         sockaddr_in peer{};
         socklen_t peer_size = sizeof(peer);
         const int client = accept(server, reinterpret_cast<sockaddr*>(&peer), &peer_size);
         if (client < 0) {
             if (errno == EINTR) continue;
+            if (g_stop_requested) break;
             continue;
         }
 
@@ -773,7 +926,14 @@ int main() {
         }
     }
 
+    LogKlog("Shutting down HTTP listener and active network mount");
     close(server);
-    (void)sceNetPoolDestroy(net_pool);
+    g_server_socket = -1;
+    pthread_mutex_lock(&g_mount_api_lock);
+    std::string unmount_error;
+    if (!g_mount.Unmount("/hostapp", &unmount_error) && !unmount_error.empty())
+        LogKlog("Mount cleanup during shutdown failed: " + unmount_error);
+    pthread_mutex_unlock(&g_mount_api_lock);
+    if (net_pool >= 0) (void)sceNetPoolDestroy(net_pool);
     return 0;
 }

@@ -22,17 +22,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check out the PS5 SDK maintained by this organization
+        uses: actions/checkout@v4
+        with:
+          repository: sweenyxsky-oss/sdk
+          ref: master
+          path: deps/ps5-payload-sdk
+
       - name: Install host build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 lld-18 make python3 unzip wget
+          sudo apt-get install -y clang-18 lld-18 llvm-18-dev cmake make python3 wget
 
-      - name: Download public PS5 payload SDK
+      - name: Build and install the organization PS5 payload SDK
         run: |
           set -eux
-          wget -O /tmp/ps5-payload-sdk.zip \
-            https://github.com/ps5-payload-dev/sdk/releases/latest/download/ps5-payload-sdk.zip
-          sudo unzip -q /tmp/ps5-payload-sdk.zip -d /opt
+          make -C deps/ps5-payload-sdk install DESTDIR="$PS5_PAYLOAD_SDK"
+          PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" bash deps/ps5-payload-sdk/libcxx.sh
           test -f "$PS5_PAYLOAD_SDK/toolchain/prospero.mk"
 
       - name: Build scaffold without filesystem adapters

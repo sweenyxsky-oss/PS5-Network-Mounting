@@ -12,6 +12,7 @@ struct MountStatus {
 class MountBackend {
 public:
     MountStatus Status() const;
+    bool RecoverStaleMount(std::string* error);
     bool Mount(const std::string& protocol, const std::string& host, int port,
                const std::string& remote_path, const std::string& mountpoint,
                const std::string& username, const std::string& password,
