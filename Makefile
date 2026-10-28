@@ -3,7 +3,7 @@ BUILD := build
 TARGET := $(BUILD)/PS5NetworkMounting.elf
 LAUNCHER := $(BUILD)/PS5NetworkMountingLauncher.elf
 LAUNCHER_OBJECT := $(BUILD)/launcher.elf.o
-SRC := native/main.cpp native/mount_backend.cpp native/shortcut.cpp
+SRC := native/main.cpp native/mount_backend.cpp native/shortcut.cpp native/diagnostic_log.cpp
 PS5NM_EMBED_LAUNCHER ?= 1
 INCLUDES := -Inative -I$(PS5_PAYLOAD_SDK)/target/include -I$(PS5_PAYLOAD_SDK)/target/user/homebrew/include
 CXXFLAGS_PS5 := -std=c++17 -O2 -Wall -Wextra
@@ -68,7 +68,7 @@ $(LAUNCHER_OBJECT): $(LAUNCHER) | check-sdk
 	$(PS5_PAYLOAD_SDK)/bin/prospero-objcopy --rename-section .data=.rodata,alloc,load,readonly,data,contents $@
 endif
 
-$(TARGET): $(SRC) native/mount_backend.hpp native/shortcut.hpp native/json.hpp native/web_assets.hpp native/nfs_fuse.hpp native/smb_fuse.hpp $(if $(filter 1,$(PS5NM_EMBED_LAUNCHER)),$(LAUNCHER_OBJECT)) | check-sdk $(CHECK_FUSE)
+$(TARGET): $(SRC) native/mount_backend.hpp native/shortcut.hpp native/diagnostic_log.hpp native/json.hpp native/web_assets.hpp native/nfs_fuse.hpp native/smb_fuse.hpp $(if $(filter 1,$(PS5NM_EMBED_LAUNCHER)),$(LAUNCHER_OBJECT)) | check-sdk $(CHECK_FUSE)
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS_PS5) $(INCLUDES) $(SRC) $(if $(filter 1,$(PS5NM_EMBED_LAUNCHER)),$(LAUNCHER_OBJECT)) -o $@ $(LDFLAGS_PS5)
 	@echo "Build complete. NFS and SMB FUSE adapters were included when PS5NM_WITH_FUSE=1."
