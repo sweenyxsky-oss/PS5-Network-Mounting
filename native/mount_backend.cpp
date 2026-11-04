@@ -110,7 +110,7 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
         if (error) *error = status.message.empty() ? "The share could not be connected." : status.message;
         last_error_ = error ? *error : "Connection failed.";
         last_result_ = "Mount failed";
-        LogEvent("ERROR", protocol, last_error_);
+        LogEvent("ERROR", protocol.c_str(), last_error_);
         return false;
     }
 
@@ -119,13 +119,13 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
         if (error) *error = attach_error;
         last_error_ = attach_error;
         last_result_ = "Mount failed";
-        LogEvent("ERROR", protocol, last_error_);
+        LogEvent("ERROR", protocol.c_str(), last_error_);
         return false;
     }
 
     last_error_.clear();
     last_result_ = std::string(protocol == "smb" ? "SMB" : "NFS") + " share attached read-only at " + mountpoint + ".";
-    LogEvent("INFO", protocol, last_result_);
+    LogEvent("INFO", protocol.c_str(), last_result_);
     return true;
 #endif
 }

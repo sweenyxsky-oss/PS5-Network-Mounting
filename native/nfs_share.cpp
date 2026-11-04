@@ -357,8 +357,9 @@ private:
             }
             size_t done = 0;
             while (done < count) {
-                const int rc = nfs_pread(session_->ctx, handle_, static_cast<char*>(dst) + done,
-                                         count - done, offset + done);
+                // libnfs takes the offset and count before the buffer.
+                const int rc = nfs_pread(session_->ctx, handle_, offset + done,
+                                         count - done, static_cast<char*>(dst) + done);
                 if (rc < 0) {
                     Fail(status, -rc, "read: " + ErrorText(session_->ctx));
                     return done > 0 ? static_cast<ssize_t>(done) : -1;
