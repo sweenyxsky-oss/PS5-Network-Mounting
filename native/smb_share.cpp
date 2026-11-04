@@ -14,7 +14,9 @@
 #include <smb2/smb2.h>
 #include <smb2/libsmb2.h>
 
+#include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <fcntl.h>
 #include <cstring>
 #include <memory>
@@ -37,7 +39,7 @@ void Fail(ShareStatus* status, int code, const std::string& message) {
 struct SmbSession {
     std::mutex mutex;
     smb2_context* ctx = nullptr;
-    bool connected = false;
+    std::atomic<bool> connected{false};
     bool closing = false;
     std::string base;  // folder inside the share, no leading or trailing slash
     std::string description;
@@ -58,14 +60,26 @@ NodeInfo NodeFromStat(const struct smb2_stat_64& st) {
     node.nlink = st.smb2_nlink ? st.smb2_nlink : 1;
     node.mtime = static_cast<int64_t>(st.smb2_mtime);
     node.mtime_nsec = static_cast<uint32_t>(st.smb2_mtime_nsec);
-    // SMB has no POSIX mode: read-only, executable for everything, like the NFS side.
-    node.mode = node.is_dir ? 0555 : 0555;
+    // SMB has no POSIX mode: everything is read-only and executable, like the NFS side.
+    node.mode = 0555;
     return node;
 }
 
+// Server text plus the SMB status when libsmb2 has one: an empty error string with a
+// status of 0xC0000034 is the difference between "wrong folder" and "server said nothing".
 std::string SmbError(smb2_context* ctx) {
     const char* text = smb2_get_error(ctx);
-    return text && *text ? text : "the server gave no detail";
+    std::string out = text ? text : "";
+    const uint32_t nt = smb2_get_nterror(ctx);
+    if (nt) {
+        char hex[16];
+        std::snprintf(hex, sizeof(hex), "0x%08x", nt);
+        if (!out.empty()) out += " ";
+        out += "(SMB status ";
+        out += hex;
+        out += ")";
+    }
+    return out.empty() ? std::string("the server gave no detail") : out;
 }
 
 int SmbErrno(smb2_context* ctx) {
@@ -75,6 +89,45 @@ int SmbErrno(smb2_context* ctx) {
         if (mapped > 0) return mapped;
     }
     return EIO;
+}
+
+NodeInfo FolderNode() {
+    NodeInfo node;
+    node.is_dir = true;
+    node.mode = 0555;
+    node.nlink = 2;
+    return node;
+}
+
+// Verifies that `path` is a readable folder. libsmb2 sends a stat as an SMB2 CREATE with
+// the name exactly as given, and a few servers (notably on the share root "/") answer that
+// with an error while opening and listing the same folder works. Try the stat, then the
+// listing, and report both failures when neither works.
+bool CheckFolder(smb2_context* ctx, const std::string& path, NodeInfo* out, std::string* why) {
+    struct smb2_stat_64 st {};
+    if (smb2_stat(ctx, path.c_str(), &st) == 0) {
+        if (st.smb2_type == SMB2_TYPE_DIRECTORY) {
+            if (out) *out = NodeFromStat(st);
+            return true;
+        }
+        if (why) *why = "stat succeeded but the server did not mark it as a folder";
+        return false;
+    }
+    const std::string stat_error = SmbError(ctx);
+
+    // The root is reachable as "/" and as the empty name, depending on the server.
+    const char* candidates[] = {path.c_str(), path == "/" ? "" : path.c_str()};
+    for (const char* candidate : candidates) {
+        struct smb2dir* dir = smb2_opendir(ctx, candidate);
+        if (!dir) continue;
+        smb2_closedir(ctx, dir);
+        if (out) *out = FolderNode();
+        return true;
+    }
+    if (why) {
+        *why = "opening it failed too (stat: " + stat_error + "; listing: " + SmbError(ctx) + ")";
+    }
+    return false;
 }
 
 }  // namespace
@@ -131,17 +184,16 @@ public:
         }
         session->connected = true;
 
-        struct smb2_stat_64 root {};
-        const std::string root_path = Remote(*session, "");
-        if (smb2_stat(session->ctx, root_path.c_str(), &root) != 0 ||
-            root.smb2_type != SMB2_TYPE_DIRECTORY) {
-            const std::string why = SmbError(session->ctx);
+        NodeInfo root;
+        std::string why;
+        if (!CheckFolder(session->ctx, Remote(*session, ""), &root, &why)) {
             (void)smb2_disconnect_share(session->ctx);
             session->connected = false;
             smb2_destroy_context(session->ctx);
             session->ctx = nullptr;
-            Fail(status, EACCES, "The share connected, but " + (base.empty() ? share : base) +
-                                     " is not a readable folder: " + why);
+            Fail(status, EACCES, "The share connected, but \"" + (base.empty() ? share : base) +
+                                     "\" is not a readable folder: " + why +
+                                     ". Check the folder name inside the share.");
             return false;
         }
         session->description = "SMB2/3, share " + share + (base.empty() ? std::string() : ", folder " + base);
@@ -191,6 +243,14 @@ public:
             return false;
         }
         const std::string path = Remote(*session, rel);
+        if (rel.empty()) {
+            std::string why;
+            if (!CheckFolder(session->ctx, path, out, &why)) {
+                Fail(status, EACCES, "stat " + path + ": " + why);
+                return false;
+            }
+            return true;
+        }
         struct smb2_stat_64 st {};
         if (smb2_stat(session->ctx, path.c_str(), &st) != 0) {
             Fail(status, SmbErrno(session->ctx), "stat " + path + ": " + SmbError(session->ctx));

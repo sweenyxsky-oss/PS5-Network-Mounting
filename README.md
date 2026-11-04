@@ -44,7 +44,7 @@ right layer — that requires the kernel FUSE path this project deliberately dro
   its session alive across a detach, and a disconnect makes further reads fail with `EIO`
   instead of touching freed memory.
 - **Control panel kept.** The ProsperoMgr-styled panel is unchanged in look, now reporting the
-  share layer, protocol, endpoint, open files and bytes served.
+  share layer, protocol, endpoint, open files, requests served and bytes served.
 - **Console integration.** Startup toast with the version and panel URL, automatic WebKit launch
   (retried, and disableable with `PS5NM_NO_BROWSER=1`), a home-screen shortcut action, and a
   rotating diagnostic log on `/data`.
@@ -77,14 +77,16 @@ right layer — that requires the kernel FUSE path this project deliberately dro
 
 ## Quick start
 
-1. Send `PS5NetworkMounting.elf` with your payload loader. It initialises networking, starts the
+1. Send the release ELF (`PS5NetworkMounting-v<version>.elf`) with your payload loader. It initialises networking, starts the
    HTTP server on `0.0.0.0:18080` and shows a toast with the panel URL.
 2. Open `http://<ps5-ip>:18080` from the console browser or any device on the LAN.
 3. Choose NFS or SMB, fill in the server and share details, and press **Connect & Attach**.
 
-- **NFS:** server `192.168.1.50`, port `2049`, export `/mnt/dataPool/games`.
-- **SMB:** server `192.168.1.50`, port `445`, share `games` or `games/PS5`, plus a user and
-  password if the server needs them (leave blank for guest).
+- **NFS:** server `192.168.1.50`, export `/mnt/dataPool/games`, and no port: the payload then
+  asks the portmapper, and falls back to NFS v4 on `2049`.
+- **SMB:** server `192.168.1.50`, share `games` or `games/PS5`, plus a user and password if the
+  server needs them (leave blank for guest). Port `445` is used unless **Use a custom port** is
+  ticked in the panel.
 
 From then on, code inside the payload reads `/hostapp/...` from the share. Disconnecting closes
 the session; handles already open stay readable until they are closed.

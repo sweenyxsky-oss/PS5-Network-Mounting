@@ -12,7 +12,8 @@ PS5_PAYLOAD_SDK ?= /opt/ps5-payload-sdk
 ORBISDEV ?= $(PS5_PAYLOAD_SDK)/target/user/homebrew
 BUILD := build
 
-TARGET := $(BUILD)/PS5NetworkMounting.elf
+VERSION := 2.1.0
+TARGET := $(BUILD)/PS5NetworkMounting-v$(VERSION).elf
 LAUNCHER := $(BUILD)/PS5NetworkMountingLauncher.elf
 LAUNCHER_OBJECT := $(BUILD)/launcher.elf.o
 
@@ -78,6 +79,7 @@ check-arch:
 	@grep -q 'Wl,--wrap' Makefile || (echo "Makefile does not pass --wrap"; exit 1)
 	@! echo "$(SHARE_LIBS) $(SYSTEM_LIBS) $(LDFLAGS_PS5)" | grep -qi fuse || (echo "The build still links FUSE"; exit 1)
 	@grep -q 'posix_shim.cpp' Makefile || (echo "Makefile does not build the shim"; exit 1)
+	@grep -q "kVersion\[\] = \"$(VERSION)\"" native/main.cpp || (echo "native/main.cpp kVersion does not match Makefile VERSION $(VERSION)"; exit 1)
 
 native/web_assets.hpp: web/index.html tools/embed_ui.py
 	python3 tools/embed_ui.py $< $@
