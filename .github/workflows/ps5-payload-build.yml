@@ -86,13 +86,28 @@ jobs:
 
       - name: Build the payload
         run: |
-          set -eux
-          make clean PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV"
-          make PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" V=1
+          set -euxo pipefail
+          make clean PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" 2>&1 | tee /tmp/build.log
+          make PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" V=1 2>&1 | tee -a /tmp/build.log
           test -s build/PS5NetworkMounting.elf
           file build/PS5NetworkMounting.elf
           "$PS5_PAYLOAD_SDK/bin/prospero-readelf" -h build/PS5NetworkMounting.elf || readelf -h build/PS5NetworkMounting.elf
           sha256sum build/PS5NetworkMounting.elf
+
+      - name: Report the compiler output on the pull request
+        if: failure() && github.event.pull_request.number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          {
+            echo '### PS5 payload build failed'
+            echo
+            echo '```'
+            tail -n 160 /tmp/build.log 2>/dev/null || echo 'the build log is empty'
+            echo '```'
+          } > /tmp/failure.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/failure.md || true
 
       - name: Upload the ELF
         uses: actions/upload-artifact@v4
