@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: ps5-payload-${{ github.event.pull_request.number || github.ref }}
