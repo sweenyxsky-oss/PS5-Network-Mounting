@@ -395,6 +395,7 @@ footer {
           <button class="btn-secondary" id="refreshBtn" type="button">Refresh Status</button>
 
           <button class="btn-secondary" id="errorLogBtn" type="button">Download Error Log</button>
+          <button class="btn-secondary" id="fuseBtn" type="button">Check FUSE Support</button>
           <button class="btn-secondary" id="browserBtn" type="button">Open Console Browser</button>
           <button class="btn-secondary" id="shortcutBtn" type="button">Add Home Screen Shortcut</button>
         </div>
@@ -556,6 +557,26 @@ footer {
   $('remotePath').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('port').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('refreshBtn').addEventListener('click', refresh);
+  $('fuseBtn').addEventListener('click', async () => {
+    const btn = $('fuseBtn');
+    btn.disabled = true;
+    setNotice('Asking the kernel whether it has fusefs…', 'info');
+    try {
+      const result = await api('/probe');
+      const fuse = result.fuse || {}, dev = fuse.dev_fuse || {};
+      const kernel = fuse.kernel_type === 'registered'
+        ? 'available'
+        : fuse.kernel_type === 'missing' ? 'not present in this kernel' : 'could not be determined';
+      const device = dev.present ? (dev.opens ? 'opens' : 'present but cannot be opened') : 'missing';
+      const kind = fuse.kernel_type === 'registered' && dev.opens ? 'ok' : 'info';
+      setNotice('FUSE: ' + kernel + '; /dev/fuse ' + device + '. ' + (fuse.hint || '') +
+        ' (This payload serves shares in-process either way.)', kind);
+    } catch (err) {
+      setNotice('FUSE check failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
   $('errorLogBtn').addEventListener('click', async () => {
     const btn = $('errorLogBtn');
     btn.disabled = true;

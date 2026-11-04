@@ -39,6 +39,48 @@ The control panel (`text/html`).
 `protocol`, `endpoint`, `share_state` and `last_error` are `null` when they do not apply.
 `mode` is always `in-process`: the payload serves the share itself.
 
+## `GET /api/v1/probe`
+
+Answers "does this kernel have FUSE?" The payload itself never mounts with FUSE, so this is a
+diagnostic: it tells you whether FUSE-based software can work on this console at all.
+
+```json
+{
+  "service": "ps5-network-mounting",
+  "version": "2.0.0",
+  "mode": "in-process",
+  "used_by_payload": false,
+  "fuse": {
+    "kernel_type": "missing",
+    "kernel_checked": true,
+    "check_method": "nmount(fusefs) probe",
+    "type_errno": 19,
+    "dev_fuse": { "present": false, "opens": false, "errno": 2 },
+    "uid": 0,
+    "euid": 0,
+    "jailed": 0,
+    "hostapp": { "present": true, "fstype": "nullfs" },
+    "sandbox_base_present": true,
+    "hint": "The kernel does not have the fusefs filesystem type, so no FUSE mount can work here.",
+    "report": "uid=0 euid=0 jailed=0\nfusefs kernel type: NOT registered (nmount(fusefs) probe)\n..."
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `kernel_type` | `registered`, `missing`, or `unknown` when the platform cannot answer |
+| `kernel_checked` | true only when the filesystem type itself was tested |
+| `check_method` | how it was tested: `nmount(fusefs) probe` on PS5, `/proc/filesystems` on the host |
+| `type_errno` | errno of an inconclusive check; the probe never guesses between `EINVAL` cases |
+| `dev_fuse` | whether `/dev/fuse` exists and can be opened read/write |
+| `jailed`, `uid`, `euid` | sandbox and privilege context of the probe |
+| `hint` | one sentence naming the most likely blocker |
+
+On PS5 the type is checked with a deliberately incomplete `nmount` of `fusefs`, which cannot
+succeed and is unmounted if it ever does. The same probe runs once at startup at less depth and is
+written to the diagnostic log.
+
 ## `POST /api/v1/mount`
 
 ```json

@@ -17,11 +17,11 @@ LAUNCHER := $(BUILD)/PS5NetworkMountingLauncher.elf
 LAUNCHER_OBJECT := $(BUILD)/launcher.elf.o
 
 CORE_SRC := native/main.cpp native/mount_backend.cpp native/vfs.cpp \
-            native/shortcut.cpp native/diagnostic_log.cpp
+            native/shortcut.cpp native/diagnostic_log.cpp native/fuse_probe.cpp
 SHARE_SRC := native/nfs_share.cpp native/smb_share.cpp native/posix_shim.cpp
 SRC := $(CORE_SRC) $(SHARE_SRC)
 HEADERS := native/share.hpp native/vfs.hpp native/mount_backend.hpp native/shortcut.hpp \
-           native/diagnostic_log.hpp native/json.hpp native/web_assets.hpp
+           native/diagnostic_log.hpp native/fuse_probe.hpp native/json.hpp native/web_assets.hpp
 
 PS5NM_EMBED_LAUNCHER ?= 1
 WRAPS := $(shell sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$$/d' native/wrap.list | sed 's/^/-Wl,--wrap=/')
@@ -44,7 +44,7 @@ endif
 HOST_FLAGS := -std=c++17 -O2 -Wall -Wextra -Inative -DPS5NM_HOST -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 HOST := $(BUILD)/ps5nm-host
 HOST_SRC := native/main.cpp native/mount_backend.cpp native/vfs.cpp native/shortcut.cpp \
-            native/diagnostic_log.cpp tests/net_stubs.cpp
+            native/diagnostic_log.cpp native/fuse_probe.cpp tests/net_stubs.cpp
 TESTS := $(BUILD)/test-json $(BUILD)/test-vfs $(BUILD)/test-shim
 
 ifneq ($(wildcard $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk),)
@@ -76,7 +76,7 @@ check-arch:
 		grep -q "__wrap_$$name(" native/posix_shim.cpp || (echo "wrap.list names $$name but posix_shim.cpp has no __wrap_$$name"; exit 1); \
 	done
 	@grep -q 'Wl,--wrap' Makefile || (echo "Makefile does not pass --wrap"; exit 1)
-	@! echo "$(SRC) $(SHARE_LIBS) $(INCLUDES)" | grep -qi fuse || (echo "The build still pulls in FUSE"; exit 1)
+	@! echo "$(SHARE_LIBS) $(SYSTEM_LIBS) $(LDFLAGS_PS5)" | grep -qi fuse || (echo "The build still links FUSE"; exit 1)
 	@grep -q 'posix_shim.cpp' Makefile || (echo "Makefile does not build the shim"; exit 1)
 
 native/web_assets.hpp: web/index.html tools/embed_ui.py

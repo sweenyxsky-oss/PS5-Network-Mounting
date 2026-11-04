@@ -144,6 +144,18 @@ def main() -> int:
         check(status == 200, f"GET /api/v1/log returned {status}")
         check(len(log_body) > 0, "the diagnostic log has content")
 
+        status, payload = client.json_request("GET", "/api/v1/probe")
+        check(status == 200, f"GET /api/v1/probe returned {status}")
+        fuse = payload.get("fuse") or {}
+        check(fuse.get("kernel_type") in ("registered", "missing", "unknown"),
+              f"the probe reports a kernel type (got {fuse.get('kernel_type')!r})")
+        check(isinstance(fuse.get("dev_fuse"), dict), "the probe reports /dev/fuse")
+        check("fusefs" in (fuse.get("report") or ""), "the probe explains the kernel filesystem type")
+        check(bool(fuse.get("hint")), "the probe offers a diagnosis")
+        check(payload.get("used_by_payload") is False, "the probe says the payload does not use FUSE")
+        if fuse.get("kernel_type") == "registered":
+            check(fuse.get("kernel_checked") is True, "a registered type comes from a completed check")
+
         status, _ = client.json_request("GET", "/api/v1/missing")
         check(status == 404, f"an unknown endpoint is a 404 (got {status})")
 

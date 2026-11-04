@@ -26,6 +26,7 @@
 
 #include "json.hpp"
 #include "diagnostic_log.hpp"
+#include "fuse_probe.hpp"
 #include "mount_backend.hpp"
 #include "shortcut.hpp"
 #include "web_assets.hpp"
@@ -363,6 +364,28 @@ std::string StatusJson() {
         ",\"last_error\":" + (s.last_error.empty() ? "null" : Quote(s.last_error)) + "}";
 }
 
+// Answers "does this console have FUSE?" without mounting anything: the payload never uses FUSE,
+// so this is a diagnostic only.
+std::string ProbeJson() {
+    const ps5nm::FuseProbe p = ps5nm::ProbeFuseEnvironment(true);
+    return "{\"service\":" + Quote(kServiceName) + ",\"version\":" + Quote(kVersion) +
+        ",\"mode\":\"in-process\",\"used_by_payload\":false" +
+        ",\"fuse\":{\"kernel_type\":" + Quote(p.KernelType()) +
+        ",\"kernel_checked\":" + (p.kernel_checked ? "true" : "false") +
+        ",\"check_method\":" + Quote(p.check_method.empty() ? "not checked" : p.check_method) +
+        ",\"type_errno\":" + std::to_string(p.type_errno) +
+        ",\"dev_fuse\":{\"present\":" + (p.dev_present ? "true" : "false") +
+        ",\"opens\":" + (p.dev_opens ? "true" : "false") +
+        ",\"errno\":" + std::to_string(p.dev_errno) + "}" +
+        ",\"uid\":" + std::to_string(p.uid) + ",\"euid\":" + std::to_string(p.euid) +
+        ",\"jailed\":" + (p.jailed < 0 ? "null" : std::to_string(p.jailed)) +
+        ",\"hostapp\":{\"present\":" + (p.hostapp_present ? "true" : "false") +
+        ",\"fstype\":" + (p.hostapp_fstype.empty() ? "null" : Quote(p.hostapp_fstype)) + "}" +
+        ",\"sandbox_base_present\":" + (p.sandbox_present ? "true" : "false") +
+        ",\"hint\":" + Quote(p.Hint()) +
+        ",\"report\":" + Quote(p.Report()) + "}}";
+}
+
 HttpResponse ApiError(unsigned int status, const char* code, const std::string& message) {
     if (status >= 400) ps5nm::LogEvent("ERROR", "http", std::string(code ? code : "api_error") + ": " + message);
     return {status, "application/json; charset=utf-8",
@@ -398,6 +421,9 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
             (persistent ? "available" : "session-only") + "\r\n";
         return {200, "text/plain; charset=utf-8", log.empty() ? "PS5 Network Mounting: no diagnostic events recorded yet.\n" : log, headers};
     }
+
+    if (method == "GET" && path == "/api/v1/probe")
+        return {200, "application/json; charset=utf-8", ProbeJson(), "Access-Control-Allow-Origin: *"};
 
     // Reject browser state changes from foreign origins. A fixed custom header is
     // not a CSRF token: an attacker can request it through a CORS preflight.
@@ -775,6 +801,12 @@ void* StartupWorker(void* arg) {
 int main() {
     (void)ps5nm::InitDiagnosticLog();
     LogKlog("Initializing PS5 Network Mounting payload");
+    {
+        const ps5nm::FuseProbe fuse = ps5nm::ProbeFuseEnvironment(false);
+        LogKlog(std::string("[probe] /dev/fuse ") +
+                (fuse.dev_present ? (fuse.dev_opens ? "present and usable" : "present but cannot be opened") : "missing") +
+                "; full FUSE check: GET /api/v1/probe");
+    }
 
     int net_init_rc = sceNetInit();
     if (net_init_rc != 0) {
