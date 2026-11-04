@@ -29,6 +29,23 @@
 namespace ps5nm {
 namespace {
 
+// libnfs has shipped both argument orders for nfs_pread: the SDK build takes (offset, count, buf),
+// while newer upstream headers take (buf, count, offset). Pick whichever the header provides.
+template <typename Ctx, typename Fh>
+auto NfsPreadCompat(Ctx* ctx, Fh* fh, void* buf, size_t count, uint64_t offset, int)
+    -> decltype(nfs_pread(ctx, fh, buf, count, offset)) {
+    return nfs_pread(ctx, fh, buf, count, offset);
+}
+
+template <typename Ctx, typename Fh>
+auto NfsPreadCompat(Ctx* ctx, Fh* fh, void* buf, size_t count, uint64_t offset, long)
+    -> decltype(nfs_pread(ctx, fh, offset, count, buf)) {
+    return nfs_pread(ctx, fh, offset, count, buf);
+}
+
+}  // namespace
+namespace {
+
 constexpr int kMountTimeoutMs = 15000;
 constexpr int kIoTimeoutMs = 10000;
 
@@ -357,9 +374,8 @@ private:
             }
             size_t done = 0;
             while (done < count) {
-                // libnfs takes the offset and count before the buffer.
-                const int rc = nfs_pread(session_->ctx, handle_, offset + done,
-                                         count - done, static_cast<char*>(dst) + done);
+                const int rc = NfsPreadCompat(session_->ctx, handle_, static_cast<char*>(dst) + done,
+                                             count - done, offset + done, 0);
                 if (rc < 0) {
                     Fail(status, -rc, "read: " + ErrorText(session_->ctx));
                     return done > 0 ? static_cast<ssize_t>(done) : -1;
