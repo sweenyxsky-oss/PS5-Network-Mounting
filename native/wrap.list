@@ -1,0 +1,42 @@
+# The C library calls native/posix_shim.cpp stands in front of.
+#
+# The Makefile turns each line into -Wl,--wrap=<name>. The shim answers paths under
+# the mount root from the attached network share and passes every other call to the
+# real function. Keep this list in step with the __wrap_ definitions in posix_shim.cpp:
+# a call missing here would reach the kernel and fail instead of reading the share.
+fopen
+freopen
+fclose
+fread
+fwrite
+fseek
+fseeko
+ftell
+ftello
+rewind
+feof
+ferror
+fileno
+fflush
+fgetc
+fgets
+fputc
+fputs
+fprintf
+vfprintf
+setvbuf
+flockfile
+funlockfile
+open
+close
+read
+pread
+lseek
+fstat
+stat
+lstat
+access
+realpath
+opendir
+readdir
+closedir

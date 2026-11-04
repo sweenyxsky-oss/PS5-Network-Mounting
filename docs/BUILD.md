@@ -1,36 +1,63 @@
-# Build setup
+# Building
 
-The default build includes both read-only filesystem adapters. It requires:
+## Requirements
 
-- PS5 payload SDK, including `toolchain/prospero.mk` (the HTTP server uses POSIX sockets and has no libmicrohttpd dependency)
-- Itemzflow's patched FUSE headers (`itemz-daemon/include/fuse`) and the matching ORBISDEV `libfuse` binary
-- ORBISDEV `libnfs`
-- ORBISDEV-compiled `libsmb2`, plus `libssl`, `libcrypto`, and `libz`
-- Compatible headers and static libraries under the ORBISDEV prefix
+### PS5 payload
 
-Build (recommended helper):
+- The PS5 payload SDK (`PS5_PAYLOAD_SDK`, for `toolchain/prospero.mk` and `prospero-clang`).
+- `ORBISDEV` providing `include/nfsc/libnfs.h`, `include/smb2/libsmb2.h` and the static
+  libraries `libnfs.a`, `libsmb2.a`, `libssl.a`, `libcrypto.a`, `libz.a`.
 
-```sh
-export PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
-export ORBISDEV=/path/to/orbisdev
-export ITEMZFLOW_ROOT=/path/to/Itemzflow
-bash scripts/build_ps5.sh
+The CI workflow builds the SDK and those libraries from
+[`pacbrew-repo`](https://github.com/ps5-payload-dev/pacbrew-repo) (`sdk`, `openlibm`, `libcxx`,
+`zlib`, `openssl`, `libnfs`, `libsmb2`) against the organization's SDK checkout. FUSE and
+Itemzflow are no longer needed.
+
+### Host
+
+- `g++` with C++17 and `python3` (for the panel embedder and the smoke test).
+
+## Commands
+
+```bash
+# Regenerate native/web_assets.hpp after editing web/index.html
+make embed-ui
+
+# Host: build the payload with stubs, run the unit tests and the HTTP smoke test
+make test
+
+# PS5 ELF
+PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk \
+ORBISDEV=$PS5_PAYLOAD_SDK/target/user/homebrew \
+make
 ```
 
-Equivalent direct Make invocation:
+Output: `build/PS5NetworkMounting.elf`.
 
-```sh
-make PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk ORBISDEV=/path/to/orbisdev ITEMZFLOW_ROOT=/path/to/Itemzflow
-```
+## What `make test` runs
 
-Build only the native UI/API scaffold (no actual filesystem mounting):
+| Target | Covers |
+|---|---|
+| `build/test-json` | the JSON parser |
+| `build/test-vfs` | path resolution, the listing cache, read-only enforcement, attach/detach |
+| `build/test-shim` | the real `--wrap` layer on Linux: `fopen`/`read`/`seek`/`stat`/`readdir`, pass-through outside the root |
+| `tests/http_smoke.py` | the panel, every API route, error codes, foreign-Origin refusal |
 
-```sh
-make PS5NM_WITH_FUSE=0 PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
-```
+`make check-arch` verifies that `native/wrap.list` and `native/posix_shim.cpp` agree in both
+directions and that the Makefile still passes `--wrap` and no longer mentions FUSE. The
+`Source checks` workflow additionally syntax-checks both backends against upstream libnfs and
+libsmb2 headers.
 
-The build checks for the expected headers and libraries before linking. If your ORBISDEV environment does not provide a PS5-compatible `libsmb2`, the SMB adapter cannot be considered buildable until that dependency is ported and installed. Do not substitute a desktop library binary.
+## Why `--wrap`
 
-The payload defaults to HTTP port 18080 and binds to console loopback. Open `http://127.0.0.1:18080/` in the PS5 browser. One share at a time can be mounted read-only at `/hostapp`.
+`--wrap=fopen` makes every call in the payload resolve to `__wrap_fopen`, with the C library's
+own function available as `__real_fopen`. The shim answers paths under `/hostapp` and forwards
+everything else. Adding a new intercepted call means adding it to `native/wrap.list` **and**
+defining `__wrap_<name>`; `make check-arch` fails if only one side is done.
 
-The code has not yet been compiled against the actual target SDK or validated on a PS5. The build command is a documented build path, not a claim of successful compilation.
+## Notes
+
+- `-D_FILE_OFFSET_BITS=64` is required: share files are larger than 2 GiB.
+- The embedded launcher is built first and linked into the payload as a read-only object; the
+  home-screen shortcut points at it.
+- Nothing in the build needs a patched libc, a `fuse` header or a kernel module.

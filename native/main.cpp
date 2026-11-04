@@ -291,7 +291,7 @@ bool LaunchBrowserWithRetries(const std::string &url, int max_attempts = 5, int 
 
 constexpr unsigned int kDefaultPort = 18080;
 constexpr char kServiceName[] = "ps5-network-mounting";
-constexpr char kVersion[] = "1.1.4";
+constexpr char kVersion[] = "2.0.0";
 constexpr int kNetHeapSize = 5 * 1024 * 1024;
 constexpr size_t kMaxBody = 64 * 1024;
 constexpr size_t kMaxHeader = 16 * 1024;
@@ -350,11 +350,16 @@ std::string StatusJson() {
         ",\"version\":" + Quote(kVersion) + ",\"port\":" + std::to_string(g_server_port) +
         ",\"url\":" + Quote(g_server_url) + ",\"urls\":" + urls +
         ",\"browser_launched\":" + std::string(g_browser_launched.load() ? "true" : "false") +
+        ",\"mode\":\"in-process\"" +
         ",\"mounted\":" + std::string(s.mounted ? "true" : "false") +
         ",\"can_disconnect\":" + std::string(s.can_disconnect ? "true" : "false") +
+        ",\"share_state\":" + (s.backend_state.empty() ? "null" : Quote(s.backend_state)) +
         ",\"protocol\":" + (s.protocol.empty() ? "null" : Quote(s.protocol)) +
         ",\"endpoint\":" + (s.endpoint.empty() ? "null" : Quote(s.endpoint)) +
         ",\"mountpoint\":" + Quote(s.mountpoint) + ",\"last_result\":" + Quote(s.last_result) +
+        ",\"open_files\":" + std::to_string(s.open_files) +
+        ",\"bytes_served\":" + std::to_string(s.bytes) +
+        ",\"cache_hits\":" + std::to_string(s.cache_hits) +
         ",\"last_error\":" + (s.last_error.empty() ? "null" : Quote(s.last_error)) + "}";
 }
 
@@ -881,10 +886,6 @@ int main() {
         return 3;
     }
 
-    std::string recovery_error;
-    if (!g_mount.RecoverStaleMount(&recovery_error))
-        LogKlog("Startup mount recovery failed: " + recovery_error);
-
     LogKlog("Listening on " + std::string(bind_ip) + ":" + std::to_string(port) + " (URL: " + web_url + ")");
 
     // Spawn background startup worker to dispatch toast & browser without delaying the accept loop
@@ -944,12 +945,13 @@ int main() {
         }
     }
 
-    LogKlog("Shutting down HTTP listener and active network mount");
+    LogKlog("Shutting down HTTP listener and the attached share");
     close(server);
     g_server_socket = -1;
     pthread_mutex_lock(&g_mount_api_lock);
     std::string unmount_error;
-    if (!g_mount.Unmount("/hostapp", &unmount_error) && !unmount_error.empty())
+    if (ps5nm::Vfs::Instance().Attached() &&
+        !g_mount.Unmount("/hostapp", &unmount_error) && !unmount_error.empty())
         LogKlog("Mount cleanup during shutdown failed: " + unmount_error);
     pthread_mutex_unlock(&g_mount_api_lock);
     if (net_pool >= 0) (void)sceNetPoolDestroy(net_pool);

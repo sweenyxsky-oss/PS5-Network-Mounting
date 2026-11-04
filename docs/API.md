@@ -1,95 +1,101 @@
-# Web API v1 Specification
+# HTTP API
 
-The control interface embedded in `web/index.html` communicates with the native PS5 payload over HTTP JSON endpoints.
+The payload listens on `0.0.0.0:18080` by default (`PS5NM_PORT`, `PS5NM_BIND`). Responses are
+JSON unless noted. `POST` bodies must be JSON objects of at most 64 KiB.
 
-## Endpoints
+Every response sets `Cache-Control: no-store`. A `POST` whose `Origin` header is present and
+does not match the `Host` header is refused with `403`.
 
-### GET `/api/v1/log`
-Downloads up to the latest 256 KiB of diagnostic events as `text/plain` (`ps5nm.log`). On PS5, the log is persisted at `/data/PS5NetworkMounting/ps5nm.log` and rotated at 512 KiB, retaining one previous file. `X-PS5NM-Log-Persistent` is `available` or `session-only`. The log records service startup, API errors, mount/unmount outcomes, and FUSE attach failures. SMB passwords are never logged.
+## `GET /`
 
+The control panel (`text/html`).
 
-### 1. GET `/api/v1/status`
-Returns real-time mount state, adapter availability, and diagnostic metrics.
+## `GET /api/v1/status`
 
-**Response (200 OK):**
 ```json
 {
-  "mounted": false,
-  "can_disconnect": false,
-  "protocol": "",
-  "endpoint": "",
+  "state": "ready",
+  "service": "ps5-network-mounting",
+  "version": "2.0.0",
+  "mode": "in-process",
+  "port": 18080,
+  "url": "http://192.168.1.20:18080",
+  "urls": ["http://192.168.1.20:18080"],
+  "browser_launched": true,
+  "mounted": true,
+  "can_disconnect": true,
+  "share_state": "NFS v3, export /volume1/PS2",
+  "protocol": "nfs",
+  "endpoint": "nfs://192.168.1.50:2049/volume1/PS2",
   "mountpoint": "/hostapp",
-  "last_result": "Ready",
-  "last_error": ""
+  "last_result": "NFS share attached read-only at /hostapp.",
+  "open_files": 2,
+  "bytes_served": 1048576,
+  "cache_hits": 18,
+  "last_error": null
 }
 ```
 
-### 2. POST `/api/v1/mount`
-Connects to the remote server and attaches the FUSE filesystem to `/hostapp`.
+`protocol`, `endpoint`, `share_state` and `last_error` are `null` when they do not apply.
+`mode` is always `in-process`: the payload serves the share itself.
 
-**Headers required:**
-- `Content-Type: application/json`
-- `X-Requested-With: PS5NM`
+## `POST /api/v1/mount`
 
-**NFS Payload:**
 ```json
 {
-  "protocol": "nfs",
-  "host": "192.168.1.100",
-  "port": 2049,
-  "remote_path": "/mnt/dataPool/games",
+  "protocol": "smb",
+  "host": "192.168.1.50",
+  "port": 445,
+  "remote_path": "games/PS5",
   "mountpoint": "/hostapp",
-  "username": "",
+  "username": "guest",
   "password": ""
 }
 ```
 
-**SMB Payload:**
+| Field | Notes |
+|---|---|
+| `protocol` | `nfs` or `smb` |
+| `host` | hostname or IPv4 address |
+| `port` | `1`–`65535`; defaults to `2049` (NFS) or `445` (SMB) |
+| `remote_path` | NFS: absolute export path. SMB: `ShareName` or `ShareName/subfolder` |
+| `mountpoint` | must be `/hostapp` |
+| `username`, `password` | SMB only; blank username means guest |
+
+Success returns `200` with the status object. Failures:
+
+| Status | `error` | Cause |
+|---|---|---|
+| `400` | `invalid_json`, `invalid_request`, `invalid_host`, `invalid_remote_path`, `invalid_port`, `unsafe_mountpoint`, `unsupported_protocol` | request rejected before connecting |
+| `403` | `forbidden_origin` | cross-origin `POST` |
+| `500` | `mount_failed` | the server refused, authenticated wrongly, or the root is unreadable; `message` carries the detail |
+
+A second mount while a share is attached returns `500` with an explanation; disconnect first.
+
+## `POST /api/v1/unmount`
+
 ```json
-{
-  "protocol": "smb",
-  "host": "192.168.1.100",
-  "port": 445,
-  "remote_path": "games/PS5",
-  "mountpoint": "/hostapp",
-  "username": "user",
-  "password": "secret_password"
-}
+{ "mountpoint": "/hostapp" }
 ```
 
-**Responses:**
-- `200 OK`: `{"status": "ok", "message": "Share successfully mounted at /hostapp"}`
-- `400 Bad Request`: Validation failure (e.g. `invalid_json`, `invalid_port`, `unsafe_mountpoint`, `missing_host`).
-- `403 Forbidden`: `{"error": "forbidden_origin", "message": "CSRF check failed: missing required header"}`
-- `409 Conflict`: Mount already active or `/hostapp` contains existing files.
-- `500 Internal Error`: Network timeout, FUSE initialization error, or authentication failure.
+`200` with the status object, or `409` (`unmount_failed`) when nothing is attached. Handles that
+are still open stay readable until they are closed.
 
-### 3. POST `/api/v1/unmount`
-Safely unmounts `/hostapp` and tears down the active FUSE event loop.
+## `GET /api/v1/log`
 
-**Headers required:**
-- `Content-Type: application/json`
-- `X-Requested-With: PS5NM`
+`text/plain` download of the rotating log, with
+`X-PS5NM-Log-Persistent: available|session-only`.
 
-**Payload:**
-```json
-{
-  "mountpoint": "/hostapp"
-}
-```
+## `POST /api/v1/browser`
 
-**Responses:**
-- `200 OK`: `{"status": "ok", "message": "Share successfully disconnected."}`
-- `409 Conflict`: `{"error": "unmount_failed", "message": "Mountpoint /hostapp is not currently mounted."}`
+`{ "url": "http://192.168.1.20:18080" }` (optional; the panel URL is the default). Returns
+`200 {"ok":true,"url":"..."}`, `400` for a non-HTTP URL, or `502` when WebKit refuses to launch.
 
-### 4. OPTIONS `/api/v1/*`
-CORS preflight support. Returns `204 No Content` with appropriate CORS headers (`Access-Control-Allow-Origin: *`, `Access-Control-Allow-Headers: Content-Type, X-Requested-With`).
+## `POST /api/v1/shortcut`
 
----
+Creates `/data/homebrew` if needed and asks ShadowMountPlus to rescan. Returns
+`{"ok":true,"path":"...","shadow_mountplus_detected":true,"message":"..."}`.
 
-## Security & Concurrency Notes
+## `POST /api/v1/notify`
 
-1. **Network Binding:** Defaults to `0.0.0.0:18080`, allowing both the PS5 local web browser and any LAN device to reach the panel. Overridable via `PS5NM_BIND` and `PS5NM_PORT` environment variables.
-2. **CSRF Protection:** State-changing requests (`POST /mount`, `POST /unmount`) require the `X-Requested-With: PS5NM` header. Requests bearing cross-origin headers without this token are rejected with `403 Forbidden`.
-3. **Execution Permissions:** Files served via NFS and SMB are automatically mapped with `0555` (`r-xr-xr-x`) mode, allowing PS5 game binaries and PRX modules to execute without kernel permission faults.
-4. **Thread Pool:** Multi-threaded worker pool servicing up to 32 simultaneous HTTP connections with 5-second socket timeouts to prevent denial-of-service or pipeline stalls.
+`{ "message": "..." }` sends a PS5 toast. Always `200` with `{"ok":true|false,"message":"..."}`.
