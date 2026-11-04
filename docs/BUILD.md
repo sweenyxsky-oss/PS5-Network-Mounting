@@ -32,7 +32,8 @@ ORBISDEV=$PS5_PAYLOAD_SDK/target/user/homebrew \
 make
 ```
 
-Output: `build/PS5NetworkMounting.elf`.
+Output: `build/PS5NetworkMounting-v<version>.elf`, with `<version>` taken from `VERSION` in the
+Makefile. `make test` fails when that value and `kVersion` in `native/main.cpp` disagree.
 
 ## What `make test` runs
 

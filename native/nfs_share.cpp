@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -60,7 +61,7 @@ void Fail(ShareStatus* status, int code, const std::string& message) {
 struct NfsSession {
     std::mutex mutex;
     nfs_context* ctx = nullptr;
-    bool connected = false;
+    std::atomic<bool> connected{false};
     bool closing = false;
     std::string description;
 

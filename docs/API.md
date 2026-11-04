@@ -16,7 +16,7 @@ The control panel (`text/html`).
 {
   "state": "ready",
   "service": "ps5-network-mounting",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "mode": "in-process",
   "port": 18080,
   "url": "http://192.168.1.20:18080",
@@ -30,6 +30,8 @@ The control panel (`text/html`).
   "mountpoint": "/hostapp",
   "last_result": "NFS share attached read-only at /hostapp.",
   "open_files": 2,
+  "reads": 312,
+  "requests": 340,
   "bytes_served": 1048576,
   "cache_hits": 18,
   "last_error": null
@@ -37,7 +39,8 @@ The control panel (`text/html`).
 ```
 
 `protocol`, `endpoint`, `share_state` and `last_error` are `null` when they do not apply.
-`mode` is always `in-process`: the payload serves the share itself.
+`endpoint` omits the port when the protocol default is in use. `mode` is always `in-process`:
+the payload serves the share itself.
 
 ## `GET /api/v1/probe`
 
@@ -47,7 +50,7 @@ diagnostic: it tells you whether FUSE-based software can work on this console at
 ```json
 {
   "service": "ps5-network-mounting",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "mode": "in-process",
   "used_by_payload": false,
   "fuse": {
@@ -99,7 +102,7 @@ written to the diagnostic log.
 |---|---|
 | `protocol` | `nfs` or `smb` |
 | `host` | hostname or IPv4 address |
-| `port` | `1`–`65535`; defaults to `2049` (NFS) or `445` (SMB) |
+| `port` | optional; `1`–`65535`. Omitted or `0` uses the protocol default: SMB `445`, NFS the portmapper for v3 (v4 uses `2049`) |
 | `remote_path` | NFS: absolute export path. SMB: `ShareName` or `ShareName/subfolder` |
 | `mountpoint` | must be `/hostapp` |
 | `username`, `password` | SMB only; blank username means guest |

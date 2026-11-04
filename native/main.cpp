@@ -292,7 +292,7 @@ bool LaunchBrowserWithRetries(const std::string &url, int max_attempts = 5, int 
 
 constexpr unsigned int kDefaultPort = 18080;
 constexpr char kServiceName[] = "ps5-network-mounting";
-constexpr char kVersion[] = "2.0.0";
+constexpr char kVersion[] = "2.1.0";
 constexpr int kNetHeapSize = 5 * 1024 * 1024;
 constexpr size_t kMaxBody = 64 * 1024;
 constexpr size_t kMaxHeader = 16 * 1024;
@@ -359,6 +359,8 @@ std::string StatusJson() {
         ",\"endpoint\":" + (s.endpoint.empty() ? "null" : Quote(s.endpoint)) +
         ",\"mountpoint\":" + Quote(s.mountpoint) + ",\"last_result\":" + Quote(s.last_result) +
         ",\"open_files\":" + std::to_string(s.open_files) +
+        ",\"reads\":" + std::to_string(s.reads) +
+        ",\"requests\":" + std::to_string(s.requests) +
         ",\"bytes_served\":" + std::to_string(s.bytes) +
         ",\"cache_hits\":" + std::to_string(s.cache_hits) +
         ",\"last_error\":" + (s.last_error.empty() ? "null" : Quote(s.last_error)) + "}";
@@ -454,7 +456,9 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
         std::string mountpoint = req.GetString("mountpoint");
         std::string username = req.GetString("username");
         std::string password = req.GetString("password");
-        int port = req.Has("port") ? req.GetInt("port", 0) : (protocol == "smb" ? 445 : 2049);
+        // The port is optional: leaving it out (or sending 0) keeps the protocol default,
+        // SMB 445 or the NFS portmapper, which a fixed port would bypass.
+        const int port = req.Has("port") ? req.GetInt("port", 0) : 0;
 
         if (protocol.empty() || host.empty() || remote.empty() || mountpoint.empty()) {
             return ApiError(400, "invalid_request",
@@ -464,8 +468,8 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
         if (protocol != "nfs" && protocol != "smb")
             return ApiError(400, "unsupported_protocol", "Choose NFS or SMB.");
 
-        if (port < 1 || port > 65535)
-            return ApiError(400, "invalid_port", "Port must be an integer from 1 to 65535.");
+        if (port < 0 || port > 65535)
+            return ApiError(400, "invalid_port", "Port must be empty or an integer from 1 to 65535.");
 
         if (host.size() > 253 || host.find_first_of(" /\\\r\n\t") != std::string::npos)
             return ApiError(400, "invalid_host", "Enter a hostname or IPv4 address only.");

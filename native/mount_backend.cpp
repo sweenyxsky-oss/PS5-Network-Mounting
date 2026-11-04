@@ -26,7 +26,8 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
                          const std::string& remote_path, const std::string& mountpoint,
                          const std::string& username, const std::string& password,
                          std::string* error) {
-    LogEvent("INFO", "mount", protocol + " request: " + host + ":" + std::to_string(port) +
+    LogEvent("INFO", "mount", protocol + " request: " + host +
+                          (port > 0 ? ":" + std::to_string(port) : std::string(" (default port)")) +
                           remote_path + " -> " + mountpoint);
 
     if (protocol != "nfs" && protocol != "smb") {
@@ -47,8 +48,8 @@ bool MountBackend::Mount(const std::string& protocol, const std::string& host, i
         last_result_ = "Mount rejected";
         return false;
     }
-    if (port < 1 || port > 65535) {
-        if (error) *error = "Port must be between 1 and 65535.";
+    if (port < 0 || port > 65535) {
+        if (error) *error = "Port must be empty or between 1 and 65535.";
         last_error_ = error ? *error : "Invalid port.";
         last_result_ = "Mount rejected";
         return false;

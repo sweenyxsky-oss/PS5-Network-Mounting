@@ -88,12 +88,17 @@ jobs:
       - name: Build the payload
         run: |
           set -euxo pipefail
+          VERSION="$(sed -n 's/^VERSION := //p' Makefile)"
+          test -n "$VERSION"
+          ELF="build/PS5NetworkMounting-v${VERSION}.elf"
+          echo "PS5NM_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "PS5NM_ELF=$ELF" >> "$GITHUB_ENV"
           make clean PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" 2>&1 | tee /tmp/build.log
           make PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" V=1 2>&1 | tee -a /tmp/build.log
-          test -s build/PS5NetworkMounting.elf
-          file build/PS5NetworkMounting.elf
-          "$PS5_PAYLOAD_SDK/bin/prospero-readelf" -h build/PS5NetworkMounting.elf || readelf -h build/PS5NetworkMounting.elf
-          sha256sum build/PS5NetworkMounting.elf
+          test -s "$ELF"
+          file "$ELF"
+          "$PS5_PAYLOAD_SDK/bin/prospero-readelf" -h "$ELF" || readelf -h "$ELF"
+          sha256sum "$ELF"
 
       - name: Report the compiler output on the pull request
         if: failure() && github.event.pull_request.number
@@ -113,8 +118,8 @@ jobs:
       - name: Upload the ELF
         uses: actions/upload-artifact@v4
         with:
-          name: PS5NetworkMounting-ELF
-          path: build/PS5NetworkMounting.elf
+          name: PS5NetworkMounting-ELF-v${{ env.PS5NM_VERSION }}
+          path: ${{ env.PS5NM_ELF }}
           if-no-files-found: error
           retention-days: 14
 
@@ -124,23 +129,33 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
-          TAG="v2.0.0"
-          TITLE="PS5 Network Mounting v2.0.0"
+          TAG="v${PS5NM_VERSION}"
+          TITLE="PS5 Network Mounting v${PS5NM_VERSION}"
           cat <<'NOTES' > /tmp/release_notes.md
-          ## PS5 Network Mounting v2.0.0
+          ## PS5 Network Mounting v2.1.0
 
-          Rebuilt from scratch on the share layer PS5SX2 proved on the console: the
-          payload serves a network share in-process instead of through FUSE.
+          The share layer stays in-process: NFS through libnfs and SMB2/SMB3 through
+          libsmb2 behind one backend, every libc file call under /hostapp answered by
+          the payload itself. No /dev/fuse, no kernel mount, no Itemzflow.
 
-          - NFS (libnfs) and SMB2/SMB3 (libsmb2) behind one backend interface.
-          - Every libc file call under /hostapp is answered by the payload itself
-            (linker `--wrap`), with no /dev/fuse, no kernel mount and no Itemzflow
-            dependency.
-          - Read-only mapping with executable permissions (0555), so ELFs and PRXs run.
-          - Folder listings fill a 30-second stat cache, and each open file reads
-            through a growing read-ahead window.
-          - Same ProsperoMgr control panel, now reporting the share layer, open files
-            and bytes served.
+          ### Fixes
+
+          - SMB: the share root is verified by listing it as well as by a stat. Servers
+            that refuse a CREATE for "/" no longer fail with "is not a readable
+            folder", and the message now carries the SMB status when libsmb2 has one.
+          - A short read no longer reports end-of-file; only a zero read or the known
+            end of the file does.
+          - Inodes for files whose server sends none are derived from size, time and
+            mode instead of size alone.
+          - statvfs on a detaching share reports EIO like every other call.
+
+          ### Changes
+
+          - The port is optional. Leave it empty to use the protocol default: SMB 445,
+            or the NFS portmapper for both the mount and the data connection.
+          - The panel has a "Use a custom port" tick box, and the reported endpoint
+            omits a default port.
+          - Requests served are reported next to open files and bytes served.
 
           ### Limit
 
@@ -149,14 +164,15 @@ jobs:
 
           ### Included artifact
 
-          - `PS5NetworkMounting.elf`: PS5 payload built with the organization SDK,
-            libnfs and libsmb2.
+          - `PS5NetworkMounting-v2.1.0.elf`: PS5 payload built with the organization
+            SDK, libnfs and libsmb2.
           NOTES
           sed -i 's/^          //' /tmp/release_notes.md
+          sed -i "s/2\.1\.0/${PS5NM_VERSION}/g" /tmp/release_notes.md
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TITLE" --notes-file /tmp/release_notes.md
-            gh release upload "$TAG" build/PS5NetworkMounting.elf --clobber
+            gh release upload "$TAG" "$PS5NM_ELF" --clobber
           else
-            gh release create "$TAG" build/PS5NetworkMounting.elf --title "$TITLE" --notes-file /tmp/release_notes.md
+            gh release create "$TAG" "$PS5NM_ELF" --title "$TITLE" --notes-file /tmp/release_notes.md
           fi

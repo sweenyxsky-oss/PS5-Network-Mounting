@@ -26,11 +26,15 @@ double Now() {
 }
 
 // A stable inode for a node whose server did not send one; some loaders hash it.
-uint64_t StableInode(const std::string& path) {
+// Size, modification time and mode together keep two different files apart.
+uint64_t StableInode(const NodeInfo& node) {
+    const uint64_t parts[] = {node.size, static_cast<uint64_t>(node.mtime), node.mode};
     uint64_t hash = 1469598103934665603ULL;
-    for (unsigned char c : path) {
-        hash ^= c;
-        hash *= 1099511628211ULL;
+    for (uint64_t value : parts) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            hash ^= (value >> shift) & 0xff;
+            hash *= 1099511628211ULL;
+        }
     }
     return hash ? hash : 1;
 }
@@ -104,7 +108,7 @@ void FillStatFromNode(const NodeInfo& node, struct stat* out) {
     } else {
         out->st_mode = S_IFREG | 0555;
     }
-    out->st_ino = static_cast<ino_t>(node.inode ? node.inode : StableInode(std::to_string(node.size)));
+    out->st_ino = static_cast<ino_t>(node.inode ? node.inode : StableInode(node));
     out->st_nlink = static_cast<nlink_t>(node.is_dir ? 2 : (node.nlink ? node.nlink : 1));
     out->st_uid = static_cast<uid_t>(node.uid);
     out->st_gid = static_cast<gid_t>(node.gid);
@@ -184,8 +188,8 @@ bool Vfs::Attach(std::unique_ptr<ShareBackend> backend, const ShareSpec& spec, s
     s->backend = std::move(backend);
     s->spec = spec;
     s->state = s->backend->Describe();
-    s->endpoint = std::string(ProtocolName(spec.protocol)) + "://" + spec.host + ":" +
-                  std::to_string(spec.port) + spec.remote_path;
+    s->endpoint = std::string(ProtocolName(spec.protocol)) + "://" + spec.host +
+                  (spec.port > 0 ? ":" + std::to_string(spec.port) : std::string()) + spec.remote_path;
 
     ShareStatus status;
     if (!s->backend->Stat("", true, &s->root, &status)) {
@@ -362,6 +366,10 @@ int Vfs::Volume(const char* path, VolumeInfo* out) {
     ShareStatus status;
     std::lock_guard<std::mutex> lock(s->io);
     requests_.fetch_add(1);
+    if (s->closing.load()) {
+        errno = EIO;
+        return -1;
+    }
     if (!s->backend->Volume(rel, out, &status)) {
         errno = status.code ? status.code : EIO;
         return -1;

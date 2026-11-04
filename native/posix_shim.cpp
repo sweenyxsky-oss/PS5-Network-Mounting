@@ -169,7 +169,9 @@ ssize_t ReadSlot(Slot& slot, void* dst, size_t count) {
         return -1;
     }
     slot.pos += static_cast<uint64_t>(got);
-    if (static_cast<size_t>(got) < count) slot.eof = true;
+    // A short read is not the end of the file: protocol clients return short reads at their
+    // own buffer boundaries. Only a zero read or the known end of the file is EOF.
+    if (got == 0 || (slot.info.size > 0 && slot.pos >= slot.info.size)) slot.eof = true;
     return got;
 }
 

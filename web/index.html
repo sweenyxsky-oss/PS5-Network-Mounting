@@ -155,6 +155,25 @@ input:focus, select:focus {
   margin-top: 6px;
   line-height: 1.45;
 }
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-dim);
+  cursor: pointer;
+}
+.check input[type="checkbox"] {
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
 .actions {
   display: flex;
   gap: 10px;
@@ -362,7 +381,11 @@ footer {
           </div>
           <div class="field">
             <label for="port">Network Port</label>
-            <input id="port" name="port" type="number" min="1" max="65535" placeholder="2049">
+            <input id="port" name="port" type="number" min="1" max="65535" placeholder="Default (2049)" disabled>
+            <label class="check" for="customPort">
+              <input id="customPort" type="checkbox">
+              Use a custom port
+            </label>
           </div>
         </div>
 
@@ -422,6 +445,7 @@ footer {
         <div class="statrow"><span>Share Root</span><strong id="mountpointStatus">/hostapp</strong></div>
         <div class="statrow"><span>Share State</span><strong id="shareState">Idle</strong></div>
         <div class="statrow"><span>Open Files</span><strong id="openFiles">0</strong></div>
+        <div class="statrow"><span>Requests Served</span><strong id="requestsServed">0</strong></div>
         <div class="statrow"><span>Bytes Served</span><strong id="bytesServed">0 B</strong></div>
         <div class="statrow"><span>Last Action</span><strong id="lastResult">Idle</strong></div>
       </div>
@@ -448,13 +472,13 @@ footer {
       'NFS Export Path',
       '/mnt/dataPool/games',
       'Enter the exact absolute path exported by the NFS server (e.g. /mnt/dataPool/games).',
-      'NFS v3 through the portmapper, falling back to NFS v4 on port 2049. Use the export path configured on your NAS (e.g. TrueNAS).'
+      'NFS v3 through the portmapper, falling back to NFS v4. Leave the port empty unless your server needs a fixed one.'
     ],
     smb: [
       'SMB Share Name & Subpath',
       'games/PS5',
       'Enter the SMB share name, optionally followed by subfolder (e.g. games or games/PS5).',
-      'SMB2/SMB3 through libsmb2. Use the share name, not the NAS filesystem path; port 445 is the default, a custom port is supported.'
+      'SMB2/SMB3 through libsmb2. Use the share name, not the NAS filesystem path; port 445 is the default, tick a custom port only if your server listens elsewhere.'
     ]
   };
 
@@ -479,19 +503,26 @@ footer {
     $('remotePath').placeholder = d[1];
     $('pathHint').textContent = d[2];
     $('protocolHint').textContent = d[3];
-    $('port').value = defaultPorts[p];
+    $('port').placeholder = 'Default (' + defaultPorts[p] + ')';
+    if (!$('customPort').checked) $('port').value = '';
     $('credentials').hidden = (p === 'nfs');
     $('username').required = false;
     $('password').required = false;
     $('endpoint').textContent = computeEndpoint();
   }
 
+  function customPort() {
+    const raw = $('port').value.trim();
+    if (!$('customPort').checked || !raw) return 0;
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= 1 && value <= 65535 ? value : 0;
+  }
+
   function computeEndpoint() {
-    const p = protocol.value, h = $('host').value.trim(), port = $('port').value;
-    const path = $('remotePath').value.trim();
+    const p = protocol.value, h = $('host').value.trim();
+    const path = $('remotePath').value.trim(), port = customPort();
     if (!h) return '—';
-    const portStr = (port && Number(port) !== defaultPorts[p]) ? ':' + port : '';
-    return p + '://' + h + portStr + (p === 'smb' ? '/' : '') + path;
+    return p + '://' + h + (port ? ':' + port : '') + (p === 'smb' ? '/' : '') + path;
   }
 
   async function api(path, options = {}) {
@@ -524,6 +555,7 @@ footer {
     $('mountpointStatus').textContent = data.mountpoint || $('mountpoint').value || '/hostapp';
     $('shareState').textContent = data.share_state || (data.mounted ? 'Attached' : 'Idle');
     $('openFiles').textContent = String(data.open_files != null ? data.open_files : 0);
+    $('requestsServed').textContent = String(data.requests != null ? data.requests : 0);
     $('bytesServed').textContent = formatBytes(data.bytes_served || 0);
     $('lastResult').textContent = data.last_error || data.last_result || 'Ready';
 
@@ -556,6 +588,13 @@ footer {
   $('host').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('remotePath').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('port').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
+  $('customPort').addEventListener('change', () => {
+    const custom = $('customPort').checked;
+    $('port').disabled = !custom;
+    if (!custom) $('port').value = '';
+    else if (!$('port').value) $('port').value = defaultPorts[protocol.value];
+    $('endpoint').textContent = computeEndpoint();
+  });
   $('refreshBtn').addEventListener('click', refresh);
   $('fuseBtn').addEventListener('click', async () => {
     const btn = $('fuseBtn');
@@ -635,12 +674,15 @@ footer {
     const body = {
       protocol: protocol.value,
       host: $('host').value.trim(),
-      port: Number($('port').value || defaultPorts[protocol.value]),
       remote_path: $('remotePath').value.trim(),
       mountpoint: $('mountpoint').value.trim(),
       username: $('username').value,
       password: $('password').value
     };
+    // The port stays out of the request unless it was ticked: the payload then uses the
+    // protocol default (SMB 445, or the NFS portmapper).
+    const port = customPort();
+    if (port) body.port = port;
 
     try {
       const result = await api('/mount', { method: 'POST', body: JSON.stringify(body) });

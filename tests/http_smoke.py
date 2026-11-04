@@ -96,6 +96,7 @@ def main() -> int:
         check(payload.get("mode") == "in-process", "the status reports the in-process share layer")
         check(payload.get("mounted") is False, "nothing is attached at startup")
         check(isinstance(payload.get("version"), str), "the version is reported")
+        check(isinstance(payload.get("requests"), int), "the request counter is reported")
         check(isinstance(payload.get("urls"), list), "the panel URL list is reported")
 
         status, payload = client.json_request("POST", "/api/v1/mount", {})
@@ -113,6 +114,20 @@ def main() -> int:
             "remote_path": "/games", "mountpoint": "/hostapp",
         })
         check(status == 400, f"an SMB path with a leading slash is a 400 (got {status})")
+
+        status, payload = client.json_request("POST", "/api/v1/mount", {
+            "protocol": "nfs", "host": "192.168.1.50", "port": 70000,
+            "remote_path": "/mnt/games", "mountpoint": "/hostapp",
+        })
+        check(status == 400, f"a port above 65535 is a 400 (got {status})")
+
+        status, payload = client.json_request("POST", "/api/v1/mount", {
+            "protocol": "nfs", "host": "192.168.1.50",
+            "remote_path": "/mnt/games", "mountpoint": "/hostapp",
+        })
+        check(status == 500, f"a mount request without a port is accepted (got {status})")
+        check("backend" in payload.get("message", "").lower(),
+              "the port-less request reaches the share layer instead of the validator")
 
         status, payload = client.json_request("POST", "/api/v1/mount", {
             "protocol": "ftp", "host": "192.168.1.50", "port": 21,

@@ -30,7 +30,7 @@ const char* ProtocolName(Protocol protocol);
 struct ShareSpec {
     Protocol protocol = Protocol::kNfs;
     std::string host;
-    int port = 0;
+    int port = 0;  // 0 keeps the protocol default: SMB 445, or the NFS portmapper
     std::string remote_path;  // NFS export path, or SMB "Share" / "Share/subfolder"
     std::string username;
     std::string password;
