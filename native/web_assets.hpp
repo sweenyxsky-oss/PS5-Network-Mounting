@@ -331,7 +331,7 @@ footer {
       <div class="brand-icon">P</div>
       <div>
         <h1>PS5 Network Mounting</h1>
-        <div class="brand-sub">NFS &amp; SMB FUSE Adapter · Read-Only /hostapp Target · Prospero Control</div>
+        <div class="brand-sub">NFS &amp; SMB Share Layer · In-Process /hostapp · Prospero Control</div>
       </div>
     </div>
     <div class="header-status">
@@ -344,7 +344,7 @@ footer {
   <section class="panel">
     <div class="panel-head">
       <h2>Remote Share Configuration</h2>
-      <p class="sub">Configure and mount an NFS export or Windows/SMB share to /hostapp.</p>
+      <p class="sub">Serve an NFS export or Windows/SMB share under /hostapp.</p>
     </div>
     <div class="panel-body">
       <form id="connectForm">
@@ -354,7 +354,7 @@ footer {
             <option value="nfs">NFS (Network File System)</option>
             <option value="smb">SMB (Server Message Block / CIFS)</option>
           </select>
-          <div class="hint" id="protocolHint">NFS mounts read-only at /hostapp. Use the export path configured on your NAS (e.g. TrueNAS).</div>
+          <div class="hint" id="protocolHint">NFS v3 (v4 fallback) through libnfs. Use the export path configured on your NAS (e.g. TrueNAS).</div>
         </div>
 
         <div class="two">
@@ -386,30 +386,31 @@ footer {
         </div>
 
         <div class="field">
-          <label for="mountpoint">Console Target Mountpoint</label>
+          <label for="mountpoint">Share Root</label>
           <input id="mountpoint" name="mountpoint" value="/hostapp" required readonly>
-          <div class="hint">For kernel and game execution safety, this payload manages only the /hostapp target.</div>
+          <div class="hint">Every path under this root is answered by the payload itself; nothing else on the console is touched.</div>
         </div>
 
         <div class="actions">
-          <button class="btn-primary" id="connectBtn" type="submit">Connect &amp; Mount</button>
+          <button class="btn-primary" id="connectBtn" type="submit">Connect &amp; Attach</button>
           <button class="btn-danger" id="disconnectBtn" type="button" disabled>Disconnect</button>
           <button class="btn-secondary" id="refreshBtn" type="button">Refresh Status</button>
 
           <button class="btn-secondary" id="errorLogBtn" type="button">Download Error Log</button>
+          <button class="btn-secondary" id="fuseBtn" type="button">Check FUSE Support</button>
           <button class="btn-secondary" id="browserBtn" type="button">Open Console Browser</button>
           <button class="btn-secondary" id="shortcutBtn" type="button">Add Home Screen Shortcut</button>
         </div>
       </form>
 
-      <div class="notice info show" id="notice" role="status" aria-live="polite">Payload daemon ready. Enter server details and press Connect &amp; Mount.</div>
+      <div class="notice info show" id="notice" role="status" aria-live="polite">Share layer ready. Enter server details and press Connect &amp; Attach.</div>
     </div>
   </section>
 
   <aside class="panel">
     <div class="panel-head">
-      <h2>Live Mount Diagnostics</h2>
-      <p class="sub">Kernel and FUSE state reported by the native PS5 payload.</p>
+      <h2>Live Share Diagnostics</h2>
+      <p class="sub">State reported by the native PS5 payload.</p>
     </div>
     <div class="panel-body">
       <div class="statbox pmgr-mono">
@@ -417,22 +418,25 @@ footer {
         <div class="statrow"><span>Version</span><strong id="payloadVersion">—</strong></div>
         <div class="statrow"><span>Console URLs</span><strong id="consoleUrls">—</strong></div>
         <div class="statrow"><span>WebKit</span><strong id="browserState">Checking…</strong></div>
+        <div class="statrow"><span>Share Layer</span><strong id="shareLayer">In-process</strong></div>
         <div class="statrow"><span>Active Protocol</span><strong id="statusProtocol">—</strong></div>
         <div class="statrow"><span>Remote Endpoint</span><strong id="endpoint">—</strong></div>
-        <div class="statrow"><span>Mount Location</span><strong id="mountpointStatus">/hostapp</strong></div>
-        <div class="statrow"><span>FUSE State</span><strong id="fsState">Unmounted</strong></div>
+        <div class="statrow"><span>Share Root</span><strong id="mountpointStatus">/hostapp</strong></div>
+        <div class="statrow"><span>Share State</span><strong id="shareState">Idle</strong></div>
+        <div class="statrow"><span>Open Files</span><strong id="openFiles">0</strong></div>
+        <div class="statrow"><span>Bytes Served</span><strong id="bytesServed">0 B</strong></div>
         <div class="statrow"><span>Last Action</span><strong id="lastResult">Idle</strong></div>
       </div>
 
       <div class="warning-box">
-        <strong>Mount Execution Safety:</strong> Regular files on SMB and NFS are automatically mapped with execution permissions (0555) so PS5 game ELFs and PRXs run smoothly. Only /hostapp is modified.
+        <strong>In-process share layer:</strong> the payload answers file calls under <span class="pmgr-mono">/hostapp</span> itself, using libnfs and libsmb2. No kernel mount or FUSE device is involved, so only code running inside this payload sees the share. Regular files are mapped read-only and executable (0555).
       </div>
     </div>
   </aside>
 </main>
 
 <footer>
-  <div>PS5 Network Mounting · Prospero FUSE Engine · Based on libnfs &amp; libsmb2</div>
+  <div>PS5 Network Mounting · In-Process Share Engine · Based on libnfs &amp; libsmb2</div>
   <div>Access from PS5 browser or LAN: <span class="pmgr-mono">http://&lt;ps5-ip&gt;:18080</span></div>
 </footer>
 
@@ -446,15 +450,24 @@ footer {
       'NFS Export Path',
       '/mnt/dataPool/games',
       'Enter the exact absolute path exported by the NFS server (e.g. /mnt/dataPool/games).',
-      'NFS mounts read-only at /hostapp. Use the export path configured on your NAS (e.g. TrueNAS).'
+      'NFS v3 through the portmapper, falling back to NFS v4 on port 2049. Use the export path configured on your NAS (e.g. TrueNAS).'
     ],
     smb: [
       'SMB Share Name & Subpath',
       'games/PS5',
       'Enter the SMB share name, optionally followed by subfolder (e.g. games or games/PS5).',
-      'SMB mounts read-only at /hostapp. Use the SMB share name, not the NAS filesystem path.'
+      'SMB2/SMB3 through libsmb2. Use the share name, not the NAS filesystem path; port 445 is the default, a custom port is supported.'
     ]
   };
+
+  function formatBytes(value) {
+    const bytes = Number(value) || 0;
+    if (bytes < 1024) return bytes + ' B';
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let size = bytes / 1024, unit = 0;
+    while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+    return size.toFixed(size >= 10 ? 0 : 1) + ' ' + units[unit];
+  }
 
   function setNotice(message, kind = 'info') {
     const n = $('notice');
@@ -507,21 +520,25 @@ footer {
     const urls = Array.isArray(data.urls) && data.urls.length ? data.urls : (data.url ? [data.url] : []);
     $('consoleUrls').textContent = urls.length ? urls.join(' · ') : '127.0.0.1:' + (data.port || 18080);
     $('browserState').textContent = data.browser_launched ? 'Launched' : 'Not launched';
+    $('shareLayer').textContent = data.mode === 'in-process' ? 'In-process' : (data.mode || 'In-process');
     $('statusProtocol').textContent = data.protocol ? data.protocol.toUpperCase() : '—';
     $('endpoint').textContent = data.endpoint || '—';
     $('mountpointStatus').textContent = data.mountpoint || $('mountpoint').value || '/hostapp';
-    $('fsState').textContent = data.mounted ? 'Mounted (Active)' : 'Unmounted';
+    $('shareState').textContent = data.share_state || (data.mounted ? 'Attached' : 'Idle');
+    $('openFiles').textContent = String(data.open_files != null ? data.open_files : 0);
+    $('bytesServed').textContent = formatBytes(data.bytes_served || 0);
     $('lastResult').textContent = data.last_error || data.last_result || 'Ready';
 
     const pill = $('statusPill');
     if (data.mounted) {
-      pill.innerHTML = '<span class="pmgr-live-dot"></span>Mounted';
+      pill.innerHTML = '<span class="pmgr-live-dot"></span>Attached';
       pill.className = 'pill good';
     } else {
       pill.innerHTML = '<span class="pmgr-live-dot"></span>Ready';
       pill.className = 'pill warn';
     }
     $('disconnectBtn').disabled = !(data.can_disconnect !== undefined ? data.can_disconnect : data.mounted);
+    $('connectBtn').disabled = !!data.mounted;
   }
 
   async function refresh() {
@@ -542,6 +559,26 @@ footer {
   $('remotePath').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('port').addEventListener('input', () => $('endpoint').textContent = computeEndpoint());
   $('refreshBtn').addEventListener('click', refresh);
+  $('fuseBtn').addEventListener('click', async () => {
+    const btn = $('fuseBtn');
+    btn.disabled = true;
+    setNotice('Asking the kernel whether it has fusefs…', 'info');
+    try {
+      const result = await api('/probe');
+      const fuse = result.fuse || {}, dev = fuse.dev_fuse || {};
+      const kernel = fuse.kernel_type === 'registered'
+        ? 'available'
+        : fuse.kernel_type === 'missing' ? 'not present in this kernel' : 'could not be determined';
+      const device = dev.present ? (dev.opens ? 'opens' : 'present but cannot be opened') : 'missing';
+      const kind = fuse.kernel_type === 'registered' && dev.opens ? 'ok' : 'info';
+      setNotice('FUSE: ' + kernel + '; /dev/fuse ' + device + '. ' + (fuse.hint || '') +
+        ' (This payload serves shares in-process either way.)', kind);
+    } catch (err) {
+      setNotice('FUSE check failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
   $('errorLogBtn').addEventListener('click', async () => {
     const btn = $('errorLogBtn');
     btn.disabled = true;
@@ -595,7 +632,7 @@ footer {
     e.preventDefault();
     const btn = $('connectBtn');
     btn.disabled = true;
-    setNotice('Connecting and mounting filesystem…', 'info');
+    setNotice('Connecting and attaching the share…', 'info');
 
     const body = {
       protocol: protocol.value,
@@ -609,10 +646,10 @@ footer {
 
     try {
       const result = await api('/mount', { method: 'POST', body: JSON.stringify(body) });
-      setNotice(result.message || 'Share successfully mounted at ' + body.mountpoint, 'ok');
+      setNotice(result.message || 'Share attached under ' + body.mountpoint, 'ok');
       await refresh();
     } catch (err) {
-      setNotice('Mount failed: ' + err.message, 'error');
+      setNotice('Attach failed: ' + err.message, 'error');
       await refresh();
     } finally {
       btn.disabled = false;
@@ -621,10 +658,10 @@ footer {
 
   $('disconnectBtn').addEventListener('click', async () => {
     $('disconnectBtn').disabled = true;
-    setNotice('Unmounting filesystem…', 'info');
+    setNotice('Detaching the share…', 'info');
     try {
       const result = await api('/unmount', { method: 'POST', body: JSON.stringify({ mountpoint: $('mountpoint').value.trim() }) });
-      setNotice(result.message || 'Share successfully disconnected.', 'ok');
+      setNotice(result.message || 'Share detached.', 'ok');
       await refresh();
     } catch (err) {
       setNotice('Disconnect failed: ' + err.message, 'error');

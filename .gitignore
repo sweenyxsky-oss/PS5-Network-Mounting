@@ -1,3 +1,5 @@
 build/
+.ref/
+*.o
+*.elf
 __pycache__/
-*.pyc

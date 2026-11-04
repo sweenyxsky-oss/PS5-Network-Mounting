@@ -1,0 +1,162 @@
+name: PS5 payload build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ps5-payload-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build the PS5 payload with NFS and SMB
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+      ORBISDEV: /opt/ps5-payload-sdk/target/user/homebrew
+    steps:
+      - name: Check out the payload
+        uses: actions/checkout@v4
+
+      - name: Check out the PS5 SDK
+        uses: actions/checkout@v4
+        with:
+          repository: sweenyxsky-oss/sdk
+          ref: master
+          path: deps/sdk
+
+      - name: Install build-host dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config meson clang-18 lld-18 llvm-18-dev \
+            libclang-18-dev libclang-cpp18-dev libclc-18-dev libllvmspirvlib-18-dev \
+            build-essential autoconf libtool yasm nasm bison flex gperf pkgconf \
+            libarchive-tools autopoint po4a git curl doxygen makepkg \
+            pacman-package-manager python3-mako python3-glad spirv-tools glslang-tools \
+            python3-packaging unzip
+          sudo python3 -m pip install --break-system-packages 'meson>=1.4.0'
+
+      - name: Build the SDK and the share libraries
+        run: |
+          set -eux
+          git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo.git /tmp/pacbrew-repo
+          cd /tmp/pacbrew-repo
+          python3 - <<'PY'
+          from pathlib import Path
+          recipe = Path("sdk/PKGBUILD")
+          contents = recipe.read_text()
+          contents = contents.replace(
+              "https://github.com/ps5-payload-dev/sdk.git",
+              "https://github.com/sweenyxsky-oss/sdk.git",
+          )
+          contents = contents.replace(
+              "git describe --tags --long | sed 's/^[^0-9]*//; s/\\([^-]*-g\\)/r\\1/; s/-/./g'",
+              "printf '1.0.r%s.g%s' \"$(git rev-list --count HEAD)\" \"$(git rev-parse --short HEAD)\"",
+          )
+          if "https://github.com/sweenyxsky-oss/sdk.git" not in contents:
+              raise SystemExit("failed to select the organization SDK source")
+          if "git describe --tags --long" in contents:
+              raise SystemExit("SDK package version still requires upstream tags")
+          recipe.write_text(contents)
+          PY
+          for package in sdk openlibm libcxx zlib openssl libnfs libsmb2; do
+            pushd "$package"
+            rm -f ./*.pkg.tar.gz
+            rm -rf src pkg
+            makepkg --noconfirm -c -f -C
+            sudo pacman --config "$PWD/../pacman.conf" --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+            popd
+          done
+          test -f "$PS5_PAYLOAD_SDK/toolchain/prospero.mk"
+          test -f "$ORBISDEV/include/nfsc/libnfs.h"
+          test -f "$ORBISDEV/include/smb2/libsmb2.h"
+          test -f "$ORBISDEV/lib/libnfs.a"
+          test -f "$ORBISDEV/lib/libsmb2.a"
+          test -f "$ORBISDEV/lib/libssl.a"
+          test -f "$ORBISDEV/lib/libcrypto.a"
+          test -f "$ORBISDEV/lib/libz.a"
+
+      - name: Build the payload
+        run: |
+          set -euxo pipefail
+          make clean PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" 2>&1 | tee /tmp/build.log
+          make PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" V=1 2>&1 | tee -a /tmp/build.log
+          test -s build/PS5NetworkMounting.elf
+          file build/PS5NetworkMounting.elf
+          "$PS5_PAYLOAD_SDK/bin/prospero-readelf" -h build/PS5NetworkMounting.elf || readelf -h build/PS5NetworkMounting.elf
+          sha256sum build/PS5NetworkMounting.elf
+
+      - name: Report the compiler output on the pull request
+        if: failure() && github.event.pull_request.number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          {
+            echo '### PS5 payload build failed'
+            echo
+            echo '```'
+            tail -n 160 /tmp/build.log 2>/dev/null || echo 'the build log is empty'
+            echo '```'
+          } > /tmp/failure.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/failure.md || true
+
+      - name: Upload the ELF
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS5NetworkMounting-ELF
+          path: build/PS5NetworkMounting.elf
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish the release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eux
+          TAG="v2.0.0"
+          TITLE="PS5 Network Mounting v2.0.0"
+          cat <<'NOTES' > /tmp/release_notes.md
+          ## PS5 Network Mounting v2.0.0
+
+          Rebuilt from scratch on the share layer PS5SX2 proved on the console: the
+          payload serves a network share in-process instead of through FUSE.
+
+          - NFS (libnfs) and SMB2/SMB3 (libsmb2) behind one backend interface.
+          - Every libc file call under /hostapp is answered by the payload itself
+            (linker `--wrap`), with no /dev/fuse, no kernel mount and no Itemzflow
+            dependency.
+          - Read-only mapping with executable permissions (0555), so ELFs and PRXs run.
+          - Folder listings fill a 30-second stat cache, and each open file reads
+            through a growing read-ahead window.
+          - Same ProsperoMgr control panel, now reporting the share layer, open files
+            and bytes served.
+
+          ### Limit
+
+          An in-process share is visible to code running inside this payload only.
+          Other applications on the console cannot see /hostapp.
+
+          ### Included artifact
+
+          - `PS5NetworkMounting.elf`: PS5 payload built with the organization SDK,
+            libnfs and libsmb2.
+          NOTES
+          sed -i 's/^          //' /tmp/release_notes.md
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes-file /tmp/release_notes.md
+            gh release upload "$TAG" build/PS5NetworkMounting.elf --clobber
+          else
+            gh release create "$TAG" build/PS5NetworkMounting.elf --title "$TITLE" --notes-file /tmp/release_notes.md
+          fi

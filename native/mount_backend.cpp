@@ -1,260 +1,152 @@
-#include "mount_backend.hpp"
-#include "diagnostic_log.hpp"
+// Validation and orchestration for one mount request. The protocol libraries live in
+// nfs_share.cpp and smb_share.cpp; nothing here knows how either of them works.
+//
+// Copyright (C) 2026 the PS5 Network Mounting contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
 
-#if defined(__FreeBSD__) || defined(__ORBIS__) || defined(_ORBIS_)
-#include <sys/mount.h>
-#include <sys/param.h>
-#else
-#include <linux/magic.h>
-#include <sys/mount.h>
-#include <sys/vfs.h>
-#endif
+#include "mount_backend.hpp"
+
 #include <cerrno>
 #include <cstring>
+#include <memory>
 
-#ifdef PS5NM_WITH_FUSE
-#include "nfs_fuse.hpp"
-#include "smb_fuse.hpp"
-#endif
+#include "diagnostic_log.hpp"
+#include "share.hpp"
 
 namespace ps5nm {
-namespace {
-bool IsFuseMount(const struct statfs& mount_info) {
-#if defined(__FreeBSD__) || defined(__ORBIS__) || defined(_ORBIS_)
-    return std::strcmp(mount_info.f_fstypename, "fusefs") == 0 ||
-           std::strcmp(mount_info.f_fstypename, "fuse") == 0;
-#else
-    return static_cast<unsigned long>(mount_info.f_type) == FUSE_SUPER_MAGIC;
-#endif
-}
-} // namespace
-
-bool MountBackend::RecoverStaleMount(std::string* error) {
-#ifdef PS5NM_WITH_FUSE
-    if (NfsFuseIsMounted() || SmbFuseIsMounted()) return true;
-#endif
-    struct statfs mount_info{};
-    if (statfs("/hostapp", &mount_info) != 0) {
-        if (errno == ENOENT) return true;
-        if (error) *error = std::string("Cannot inspect /hostapp mount state: ") + std::strerror(errno);
-        status_.last_error = error ? *error : "Cannot inspect /hostapp mount state.";
-        status_.last_result = "Mount recovery failed";
-        return false;
-    }
-    if (!IsFuseMount(mount_info)) return true;
-#if defined(__FreeBSD__) || defined(__ORBIS__) || defined(_ORBIS_)
-    if (unmount("/hostapp", MNT_FORCE) == 0) return true;
-#else
-    if (umount2("/hostapp", 0) == 0) return true;
-#endif
-    if (error) *error = std::string("Cannot detach stale FUSE mount at /hostapp: ") + std::strerror(errno);
-    status_.last_error = error ? *error : "Cannot detach stale FUSE mount.";
-    status_.last_result = "Mount recovery failed";
-    return false;
-}
 
 MountStatus MountBackend::Status() const {
-    MountStatus current = status_;
-    current.can_disconnect = status_.mounted || !status_.protocol.empty();
-#ifdef PS5NM_WITH_FUSE
-    if (current.mounted && current.protocol == "nfs" && !NfsFuseIsMounted()) {
-        current.mounted = false;
-        current.last_result = "NFS mount stopped";
-        current.last_error = "The FUSE request loop is no longer active. Disconnect to clean up, then reconnect.";
-    }
-    if (current.mounted && current.protocol == "smb" && !SmbFuseIsMounted()) {
-        current.mounted = false;
-        current.last_result = "SMB mount stopped";
-        current.last_error = "The FUSE request loop is no longer active. Disconnect to clean up, then reconnect.";
-    }
-#endif
-    return current;
+    MountStatus status = Vfs::Instance().Status();
+    status.last_result = last_result_;
+    status.last_error = last_error_;
+    return status;
 }
 
 bool MountBackend::Mount(const std::string& protocol, const std::string& host, int port,
                          const std::string& remote_path, const std::string& mountpoint,
                          const std::string& username, const std::string& password,
                          std::string* error) {
-    (void)password;
-    LogEvent("INFO", "mount", protocol + " mount requested: " + host + ":" + std::to_string(port) + remote_path + " -> " + mountpoint);
+    LogEvent("INFO", "mount", protocol + " request: " + host + ":" + std::to_string(port) +
+                          remote_path + " -> " + mountpoint);
 
     if (protocol != "nfs" && protocol != "smb") {
         if (error) *error = "Unsupported protocol. Choose NFS or SMB.";
-        status_.last_error = error ? *error : "Unsupported protocol.";
-        status_.last_result = "Mount rejected";
-        return false;
-    }
-#ifdef PS5NM_WITH_FUSE
-    if (status_.mounted && status_.protocol == "nfs" && !NfsFuseIsMounted()) {
-        if (!StopNfsFuse("/hostapp", error) && !RecoverStaleMount(error)) {
-            status_.last_error = error ? *error : "Stale NFS mount cleanup failed.";
-            status_.last_result = "Mount recovery failed";
-            return false;
-        }
-        status_.mounted = false;
-        status_.protocol.clear();
-        status_.endpoint.clear();
-        status_.last_result = "Stale NFS mount cleaned up";
-    }
-    if (status_.mounted && status_.protocol == "smb" && !SmbFuseIsMounted()) {
-        if (!StopSmbFuse("/hostapp", error) && !RecoverStaleMount(error)) {
-            status_.last_error = error ? *error : "Stale SMB mount cleanup failed.";
-            status_.last_result = "Mount recovery failed";
-            return false;
-        }
-        status_.mounted = false;
-        status_.protocol.clear();
-        status_.endpoint.clear();
-        status_.last_result = "Stale SMB mount cleaned up";
-    }
-    if (NfsFuseIsMounted() || SmbFuseIsMounted()) {
-        if (error) *error = "A network share is already mounted. Disconnect it before connecting another share.";
-        status_.last_error = error ? *error : "Another share is mounted.";
-        status_.last_result = "Mount rejected";
-        return false;
-    }
-#endif
-    if (!RecoverStaleMount(error)) return false;
-    if (status_.mounted) {
-        if (error) *error = "A network share is already mounted. Disconnect it before connecting another share.";
-        status_.last_error = error ? *error : "Another share is mounted.";
-        status_.last_result = "Mount rejected";
+        last_error_ = error ? *error : "Unsupported protocol.";
+        last_result_ = "Mount rejected";
         return false;
     }
     if (mountpoint != "/hostapp") {
-        if (error) *error = "For safety, this payload only manages /hostapp.";
-        status_.last_error = error ? *error : "Unsafe mountpoint.";
-        status_.last_result = "Mount rejected";
+        if (error) *error = "For safety, this payload only serves the /hostapp root.";
+        last_error_ = error ? *error : "Unsafe mountpoint.";
+        last_result_ = "Mount rejected";
         return false;
     }
-    if (host.empty() || host.size() > 253 ||
-        host.find_first_of(" /\\\r\n\t") != std::string::npos) {
+    if (host.empty() || host.size() > 253 || host.find_first_of(" /\\\r\n\t") != std::string::npos) {
         if (error) *error = "Enter a hostname or IPv4 address only.";
-        status_.last_error = error ? *error : "Invalid host.";
-        status_.last_result = "Mount rejected";
+        last_error_ = error ? *error : "Invalid host.";
+        last_result_ = "Mount rejected";
         return false;
     }
     if (port < 1 || port > 65535) {
         if (error) *error = "Port must be between 1 and 65535.";
-        status_.last_error = error ? *error : "Invalid port.";
-        status_.last_result = "Mount rejected";
+        last_error_ = error ? *error : "Invalid port.";
+        last_result_ = "Mount rejected";
         return false;
     }
     if (remote_path.empty() || remote_path.size() > 1024 ||
         remote_path.find("..") != std::string::npos ||
-        remote_path.find_first_of("?#\\\\\r\n") != std::string::npos) {
-        if (error) *error = "Invalid remote path. '..', URL query characters, and line breaks are not allowed.";
-        status_.last_error = error ? *error : "Invalid remote path.";
-        status_.last_result = "Mount rejected";
+        remote_path.find_first_of("?#\\\r\n") != std::string::npos) {
+        if (error) *error = "Invalid remote path. '..', URL query characters and line breaks are not allowed.";
+        last_error_ = error ? *error : "Invalid remote path.";
+        last_result_ = "Mount rejected";
         return false;
     }
-
-    if (protocol == "nfs") {
-        if (remote_path.front() != '/') {
-            if (error) *error = "NFS requires the exact absolute export path, for example /mnt/dataPool/games.";
-            status_.last_error = error ? *error : "Invalid NFS export path.";
-            status_.last_result = "Mount rejected";
-            return false;
-        }
-#ifdef PS5NM_WITH_FUSE
-        if (!StartNfsFuse(host, port, remote_path, mountpoint, error)) {
-            status_.last_error = error ? *error : "NFS mount failed.";
-            status_.last_result = "NFS mount failed";
-            status_.mounted = false;
-            LogEvent("ERROR", "nfs", error ? *error : "NFS mount failed without details");
-            return false;
-        }
-        status_.mounted = true;
-        status_.protocol = "nfs";
-        status_.endpoint = "nfs://" + host + ":" + std::to_string(port) + remote_path;
-        status_.mountpoint = mountpoint;
-        status_.last_result = "NFS share mounted read-only.";
-        status_.last_error.clear();
-        LogEvent("INFO", "nfs", "NFS share mounted successfully at " + mountpoint);
-        return true;
-#else
-        if (error) *error = "This build has no PS5 FUSE/NFS adapter. Build with PS5NM_WITH_FUSE=1 and compatible ORBISDEV libraries.";
-        status_.last_error = error ? *error : "NFS adapter not linked.";
-        status_.last_result = "Mount not performed";
+    if (protocol == "nfs" && remote_path.front() != '/') {
+        if (error) *error = "NFS requires the exact absolute export path, for example /mnt/dataPool/games.";
+        last_error_ = error ? *error : "Invalid NFS export path.";
+        last_result_ = "Mount rejected";
         return false;
-#endif
     }
-
-    if (remote_path.front() == '/' || remote_path.find("//") != std::string::npos) {
+    if (protocol == "smb" && !IsSafeRelativePath(remote_path)) {
         if (error) *error = "SMB path must be ShareName or ShareName/subfolder, without a leading slash.";
-        status_.last_error = error ? *error : "Invalid SMB share path.";
-        status_.last_result = "Mount rejected";
+        last_error_ = error ? *error : "Invalid SMB share path.";
+        last_result_ = "Mount rejected";
         return false;
     }
-#ifdef PS5NM_WITH_FUSE
-    if (!StartSmbFuse(host, port, remote_path, mountpoint, username, password, error)) {
-        status_.last_error = error ? *error : "SMB mount failed.";
-        status_.last_result = "SMB mount failed";
-        status_.mounted = false;
-        LogEvent("ERROR", "smb", error ? *error : "SMB mount failed without details");
+    if (Vfs::Instance().Attached()) {
+        if (error) *error = "A share is already attached. Disconnect it before connecting another one.";
+        last_error_ = error ? *error : "Another share is attached.";
+        last_result_ = "Mount rejected";
         return false;
     }
-    status_.mounted = true;
-    status_.protocol = "smb";
-    status_.endpoint = "smb://" + host + ":" + std::to_string(port) + "/" + remote_path;
-    status_.mountpoint = mountpoint;
-    status_.last_result = "SMB share mounted read-only.";
-    status_.last_error.clear();
-    LogEvent("INFO", "smb", "SMB share mounted successfully at " + mountpoint);
-    return true;
-#else
-    if (error) *error = "This build has no PS5 FUSE/NFS/SMB adapters linked. Build with PS5NM_WITH_FUSE=1 and compatible ORBISDEV libraries.";
-    status_.last_error = error ? *error : "Filesystem adapters not linked.";
-    status_.last_result = "Mount not performed";
+
+    ShareSpec spec;
+    spec.protocol = protocol == "smb" ? Protocol::kSmb : Protocol::kNfs;
+    spec.host = host;
+    spec.port = port;
+    spec.remote_path = remote_path;
+    spec.username = username;
+    spec.password = password;
+    spec.mountpoint = mountpoint;
+
+#if defined(PS5NM_HOST)
+    (void)spec;
+    if (error) *error = "This host build has no share backends linked.";
+    last_error_ = error ? *error : "No backends.";
+    last_result_ = "Mount not performed";
     return false;
+#else
+    std::unique_ptr<ShareBackend> backend =
+        spec.protocol == Protocol::kSmb ? MakeSmbBackend(spec) : MakeNfsBackend(spec);
+    if (!backend) {
+        if (error) *error = "Could not create the share backend.";
+        last_error_ = error ? *error : "No backend.";
+        last_result_ = "Mount not performed";
+        return false;
+    }
+
+    ShareStatus status;
+    if (!backend->Connect(&status)) {
+        if (error) *error = status.message.empty() ? "The share could not be connected." : status.message;
+        last_error_ = error ? *error : "Connection failed.";
+        last_result_ = "Mount failed";
+        LogEvent("ERROR", protocol.c_str(), last_error_);
+        return false;
+    }
+
+    std::string attach_error;
+    if (!Vfs::Instance().Attach(std::move(backend), spec, &attach_error)) {
+        if (error) *error = attach_error;
+        last_error_ = attach_error;
+        last_result_ = "Mount failed";
+        LogEvent("ERROR", protocol.c_str(), last_error_);
+        return false;
+    }
+
+    last_error_.clear();
+    last_result_ = std::string(protocol == "smb" ? "SMB" : "NFS") + " share attached read-only at " + mountpoint + ".";
+    LogEvent("INFO", protocol.c_str(), last_result_);
+    return true;
 #endif
 }
 
 bool MountBackend::Unmount(const std::string& mountpoint, std::string* error) {
     LogEvent("INFO", "mount", "Unmount requested for " + mountpoint);
     if (mountpoint != "/hostapp") {
-        if (error) *error = "For safety, this payload only manages the /hostapp mountpoint.";
+        if (error) *error = "For safety, this payload only manages the /hostapp root.";
+        last_error_ = error ? *error : "Unsafe mountpoint.";
         return false;
     }
-#ifdef PS5NM_WITH_FUSE
-    if (status_.protocol == "nfs") {
-        if (NfsFuseIsMounted() || status_.mounted) {
-            if (!StopNfsFuse(mountpoint, error) && !RecoverStaleMount(error)) {
-                status_.last_error = error ? *error : "NFS unmount failed.";
-                status_.last_result = "Unmount failed";
-                return false;
-            }
-        }
-        status_.mounted = false;
-        status_.protocol.clear();
-        status_.endpoint.clear();
-        status_.last_result = "NFS share disconnected.";
-        status_.last_error.clear();
-        return true;
-    }
-    if (status_.protocol == "smb") {
-        if (SmbFuseIsMounted() || status_.mounted) {
-            if (!StopSmbFuse(mountpoint, error) && !RecoverStaleMount(error)) {
-                status_.last_error = error ? *error : "SMB unmount failed.";
-                status_.last_result = "Unmount failed";
-                return false;
-            }
-        }
-        status_.mounted = false;
-        status_.protocol.clear();
-        status_.endpoint.clear();
-        status_.last_result = "SMB share disconnected.";
-        status_.last_error.clear();
-        return true;
-    }
-#endif
-    if (!status_.mounted) {
-        if (error) *error = "No mount owned by this payload is active.";
-        status_.last_result = "Nothing to disconnect";
+    std::string detach_error;
+    if (!Vfs::Instance().Detach(&detach_error)) {
+        if (error) *error = detach_error;
+        last_error_ = detach_error;
+        last_result_ = "Nothing to disconnect";
         return false;
     }
-    if (error) *error = "The adapter that created this mount is not available in this build.";
-    return false;
+    last_error_.clear();
+    last_result_ = "Share disconnected.";
+    return true;
 }
 
-} // namespace ps5nm
+}  // namespace ps5nm

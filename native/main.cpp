@@ -26,6 +26,7 @@
 
 #include "json.hpp"
 #include "diagnostic_log.hpp"
+#include "fuse_probe.hpp"
 #include "mount_backend.hpp"
 #include "shortcut.hpp"
 #include "web_assets.hpp"
@@ -291,7 +292,7 @@ bool LaunchBrowserWithRetries(const std::string &url, int max_attempts = 5, int 
 
 constexpr unsigned int kDefaultPort = 18080;
 constexpr char kServiceName[] = "ps5-network-mounting";
-constexpr char kVersion[] = "1.1.4";
+constexpr char kVersion[] = "2.0.0";
 constexpr int kNetHeapSize = 5 * 1024 * 1024;
 constexpr size_t kMaxBody = 64 * 1024;
 constexpr size_t kMaxHeader = 16 * 1024;
@@ -350,12 +351,39 @@ std::string StatusJson() {
         ",\"version\":" + Quote(kVersion) + ",\"port\":" + std::to_string(g_server_port) +
         ",\"url\":" + Quote(g_server_url) + ",\"urls\":" + urls +
         ",\"browser_launched\":" + std::string(g_browser_launched.load() ? "true" : "false") +
+        ",\"mode\":\"in-process\"" +
         ",\"mounted\":" + std::string(s.mounted ? "true" : "false") +
         ",\"can_disconnect\":" + std::string(s.can_disconnect ? "true" : "false") +
+        ",\"share_state\":" + (s.backend_state.empty() ? "null" : Quote(s.backend_state)) +
         ",\"protocol\":" + (s.protocol.empty() ? "null" : Quote(s.protocol)) +
         ",\"endpoint\":" + (s.endpoint.empty() ? "null" : Quote(s.endpoint)) +
         ",\"mountpoint\":" + Quote(s.mountpoint) + ",\"last_result\":" + Quote(s.last_result) +
+        ",\"open_files\":" + std::to_string(s.open_files) +
+        ",\"bytes_served\":" + std::to_string(s.bytes) +
+        ",\"cache_hits\":" + std::to_string(s.cache_hits) +
         ",\"last_error\":" + (s.last_error.empty() ? "null" : Quote(s.last_error)) + "}";
+}
+
+// Answers "does this console have FUSE?" without mounting anything: the payload never uses FUSE,
+// so this is a diagnostic only.
+std::string ProbeJson() {
+    const ps5nm::FuseProbe p = ps5nm::ProbeFuseEnvironment(true);
+    return "{\"service\":" + Quote(kServiceName) + ",\"version\":" + Quote(kVersion) +
+        ",\"mode\":\"in-process\",\"used_by_payload\":false" +
+        ",\"fuse\":{\"kernel_type\":" + Quote(p.KernelType()) +
+        ",\"kernel_checked\":" + (p.kernel_checked ? "true" : "false") +
+        ",\"check_method\":" + Quote(p.check_method.empty() ? "not checked" : p.check_method) +
+        ",\"type_errno\":" + std::to_string(p.type_errno) +
+        ",\"dev_fuse\":{\"present\":" + (p.dev_present ? "true" : "false") +
+        ",\"opens\":" + (p.dev_opens ? "true" : "false") +
+        ",\"errno\":" + std::to_string(p.dev_errno) + "}" +
+        ",\"uid\":" + std::to_string(p.uid) + ",\"euid\":" + std::to_string(p.euid) +
+        ",\"jailed\":" + (p.jailed < 0 ? "null" : std::to_string(p.jailed)) +
+        ",\"hostapp\":{\"present\":" + (p.hostapp_present ? "true" : "false") +
+        ",\"fstype\":" + (p.hostapp_fstype.empty() ? "null" : Quote(p.hostapp_fstype)) + "}" +
+        ",\"sandbox_base_present\":" + (p.sandbox_present ? "true" : "false") +
+        ",\"hint\":" + Quote(p.Hint()) +
+        ",\"report\":" + Quote(p.Report()) + "}}";
 }
 
 HttpResponse ApiError(unsigned int status, const char* code, const std::string& message) {
@@ -393,6 +421,9 @@ HttpResponse HandleRequest(const std::string& method, const std::string& raw_pat
             (persistent ? "available" : "session-only") + "\r\n";
         return {200, "text/plain; charset=utf-8", log.empty() ? "PS5 Network Mounting: no diagnostic events recorded yet.\n" : log, headers};
     }
+
+    if (method == "GET" && path == "/api/v1/probe")
+        return {200, "application/json; charset=utf-8", ProbeJson(), "Access-Control-Allow-Origin: *"};
 
     // Reject browser state changes from foreign origins. A fixed custom header is
     // not a CSRF token: an attacker can request it through a CORS preflight.
@@ -770,6 +801,12 @@ void* StartupWorker(void* arg) {
 int main() {
     (void)ps5nm::InitDiagnosticLog();
     LogKlog("Initializing PS5 Network Mounting payload");
+    {
+        const ps5nm::FuseProbe fuse = ps5nm::ProbeFuseEnvironment(false);
+        LogKlog(std::string("[probe] /dev/fuse ") +
+                (fuse.dev_present ? (fuse.dev_opens ? "present and usable" : "present but cannot be opened") : "missing") +
+                "; full FUSE check: GET /api/v1/probe");
+    }
 
     int net_init_rc = sceNetInit();
     if (net_init_rc != 0) {
@@ -881,10 +918,6 @@ int main() {
         return 3;
     }
 
-    std::string recovery_error;
-    if (!g_mount.RecoverStaleMount(&recovery_error))
-        LogKlog("Startup mount recovery failed: " + recovery_error);
-
     LogKlog("Listening on " + std::string(bind_ip) + ":" + std::to_string(port) + " (URL: " + web_url + ")");
 
     // Spawn background startup worker to dispatch toast & browser without delaying the accept loop
@@ -944,12 +977,13 @@ int main() {
         }
     }
 
-    LogKlog("Shutting down HTTP listener and active network mount");
+    LogKlog("Shutting down HTTP listener and the attached share");
     close(server);
     g_server_socket = -1;
     pthread_mutex_lock(&g_mount_api_lock);
     std::string unmount_error;
-    if (!g_mount.Unmount("/hostapp", &unmount_error) && !unmount_error.empty())
+    if (ps5nm::Vfs::Instance().Attached() &&
+        !g_mount.Unmount("/hostapp", &unmount_error) && !unmount_error.empty())
         LogKlog("Mount cleanup during shutdown failed: " + unmount_error);
     pthread_mutex_unlock(&g_mount_api_lock);
     if (net_pool >= 0) (void)sceNetPoolDestroy(net_pool);

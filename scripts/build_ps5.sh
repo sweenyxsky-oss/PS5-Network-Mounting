@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
+# Builds the PS5 payload against the payload SDK and the share libraries.
 set -eo pipefail
 
-if [ -z "$PS5_PAYLOAD_SDK" ]; then PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk; fi
-if [ -z "$ORBISDEV" ]; then
-  echo "Set ORBISDEV to the PS5-compatible ORBISDEV SDK" >&2
-  exit 2
-fi
-if [ -z "$ITEMZFLOW_ROOT" ]; then ITEMZFLOW_ROOT=../Itemzflow; fi
+PS5_PAYLOAD_SDK=${PS5_PAYLOAD_SDK:-/opt/ps5-payload-sdk}
+ORBISDEV=${ORBISDEV:-$PS5_PAYLOAD_SDK/target/user/homebrew}
 
 if [ ! -f "$PS5_PAYLOAD_SDK/toolchain/prospero.mk" ]; then
   echo "PS5 payload SDK not found at: $PS5_PAYLOAD_SDK" >&2
   exit 2
 fi
-if [ ! -f "$ITEMZFLOW_ROOT/itemz-daemon/include/fuse/fuse.h" ]; then
-  echo "Itemzflow patched FUSE headers not found at: $ITEMZFLOW_ROOT" >&2
+if [ ! -f "$ORBISDEV/include/nfsc/libnfs.h" ]; then
+  echo "libnfs headers not found at: $ORBISDEV/include/nfsc" >&2
+  exit 2
+fi
+if [ ! -f "$ORBISDEV/include/smb2/libsmb2.h" ]; then
+  echo "libsmb2 headers not found at: $ORBISDEV/include/smb2" >&2
   exit 2
 fi
 
-make clean
-make PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV" ITEMZFLOW_ROOT="$ITEMZFLOW_ROOT"
+make clean PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV"
+make PS5_PAYLOAD_SDK="$PS5_PAYLOAD_SDK" ORBISDEV="$ORBISDEV"
 test -s build/PS5NetworkMounting.elf
 echo "Created build/PS5NetworkMounting.elf"
-echo "Target-console NFS/SMB mount tests are still required before this build is considered verified."
+echo "Console-side NFS and SMB smoke tests are still required before a build is verified."

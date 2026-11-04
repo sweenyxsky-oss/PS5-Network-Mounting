@@ -1,150 +1,145 @@
 # PS5 Network Mounting
 
 <div align="center">
-  <h3>Network Share FUSE Mount Daemon & Prospero Web Interface for PlayStation 5</h3>
-  <p>Mount remote NFS exports and SMB2/SMB3 shares read-only to <code>/hostapp</code> on PS5 homebrew.</p>
+  <h3>In-process NFS &amp; SMB share layer with a Prospero web panel for PlayStation 5</h3>
+  <p>Serve a remote NFS export or SMB2/SMB3 share under <code>/hostapp</code> from a native PS5 payload.</p>
 </div>
 
 ---
 
-## Overview
+## What this is
 
-**PS5 Network Mounting** is a native PS5 homebrew payload and daemon that mounts remote network shares directly into the PlayStation 5 filesystem at `/hostapp` using a user-space FUSE adapter. Once mounted, the console and homebrew loaders can browse, read, and execute applications, games, and packages directly over the local network without transferring files to the internal SSD or USB storage.
+**PS5 Network Mounting** is a native PS5 homebrew payload. It connects to an NFS export or an
+SMB2/SMB3 share, keeps the connection open, and answers reads for every path under
+`/hostapp` from that share. A small HTTP server on port `18080` serves the control panel.
 
-The daemon includes an embedded HTTP server serving a modern web control interface designed around the **ProsperoMgr** visual identity. The interface is accessible from the PS5 browser and other devices on the local network. The optional home-screen tile is registered through ShadowMountPlus and opens the local control panel only while this payload daemon is running.
+The payload does **not** create a kernel mount. It follows the mechanism PS5SX2 uses for its
+NFS shares: the protocol client is linked into the payload, the C library's file calls are
+redirected with the linker's `--wrap`, and the payload answers them itself. There is no
+`/dev/fuse`, no libfuse build, and no Itemzflow dependency.
 
----
+### The limit this design carries
 
-## Key Features
-
-- **Console Integration & UX (ProsperoMgr Style):**
-  - **WebKit Browser Launch:** On loading the ELF payload, the daemon attempts to open the PS5 browser at its LAN URL and exposes a manual retry action in the panel.
-  - **On-Screen PS5 Toast Notifications:** Displays native on-screen toast notifications upon startup showing the payload version and the local network listening URL (`http://<PS5-IP>:18080`).
-  - **Resilient Network Daemon:** Recovers gracefully if `sceNetInit` or net pools are already initialized by your payload launcher or earlier homebrew.
-- **Supported Protocols:**
-  - **NFS (v3/v4):** Backed by `libnfs` and a low-latency PS5 FUSE adapter. Connects directly to TrueNAS, Synology, QNAP, or Linux exports.
-  - **SMB2 / SMB3:** Backed by `libsmb2` and a dedicated FUSE adapter with guest and authenticated session support.
-  - *FTP and SFTP are intentionally omitted to focus on high-throughput, kernel-mountable block/file protocols.*
-- **Kernel & Execution Compatibility:**
-  - Regular files are mapped with executable permissions (`0555`), allowing native PS5 game binaries (`eboot.bin`), PRX shared libraries, and assets to execute seamlessly from `/hostapp`.
-  - Directories are mapped with standard directory permissions (`0755`).
-  - Automatic creation of the `/hostapp` mount target if missing.
-- **Embedded Web Control Panel (ProsperoMgr Theme):**
-  - Styled to match the dark graphite/navy palette (`#0a0e16`, `#10161f`, `#161e2a`) and blue accents (`#2f8cff`) of ProsperoMgr.
-  - Live mount health indicators with pulsing status pill (`.pmgr-live-dot`).
-  - Fully embedded in the binary via `tools/embed_ui.py` — zero external runtime asset dependencies.
-- **Hardened HTTP Daemon & API:**
-  - **Network-wide accessibility:** Binds to `0.0.0.0:18080` by default so any PC, phone, or tablet on your LAN can manage mounts.
-  - **Concurrency:** Thread-pool dispatch supporting up to 32 concurrent requests with socket timeouts to prevent stalls.
-  - **Standard JSON Parser:** Built-in RFC 8259 parser (`native/json.hpp`) replacing naive substring search, with validation against malformed payloads and key collisions.
-  - **CSRF & Origin Protection:** Strict checks against cross-origin attacks with required `X-Requested-With: PS5NM` request validation.
+An in-process share is visible **to code running inside this payload**. Games, the PS5 home
+screen and other homebrew run in separate processes and cannot see `/hostapp`; the console's
+filesystem is unchanged. If you need a share that other applications can open, this is not the
+right layer — that requires the kernel FUSE path this project deliberately dropped.
 
 ---
 
-## Architecture & Layout
+## Features
+
+- **Two protocols, one layer.** NFS (libnfs, v3 with a v4 fallback) and SMB2/SMB3 (libsmb2,
+  guest or authenticated, optional `DOMAIN\user`) sit behind a single backend interface, so the
+  VFS, the shim, the API and the panel are written once.
+- **Read-only, executable.** Files are mapped `0555` and folders `0555`, so ELFs and PRXs run
+  straight from a share and nothing can be written back.
+- **Built for game reads.** A folder listing fills a 30-second stat cache, so a loader that
+  stats every entry after `readdir` costs no extra round trips. Each open file reads through a
+  read-ahead window that grows from 64 KiB to 1 MiB while reads are sequential.
+- **Complete libc coverage where it matters.** `fopen`/`fread`/`fseek`/`fgetc`/`fgets`/`stat`/
+  `lstat`/`access`/`realpath`/`open`/`read`/`pread`/`lseek`/`fstat`/`close` and the directory
+  calls are all intercepted (`native/wrap.list`). Anything outside the root is untouched.
+- **Bounded failure.** Every call into a protocol context is serialised, an open handle keeps
+  its session alive across a detach, and a disconnect makes further reads fail with `EIO`
+  instead of touching freed memory.
+- **Control panel kept.** The ProsperoMgr-styled panel is unchanged in look, now reporting the
+  share layer, protocol, endpoint, open files and bytes served.
+- **Console integration.** Startup toast with the version and panel URL, automatic WebKit launch
+  (retried, and disableable with `PS5NM_NO_BROWSER=1`), a home-screen shortcut action, and a
+  rotating diagnostic log on `/data`.
+
+---
+
+## Layout
 
 ```
-├── .github/workflows/
-│   ├── ps5-full-nfs-smb-build.yml   # Full PS5 target ELF cross-compilation CI
-│   └── source-checks.yml             # Host build, JSON unit tests, smoke tests, FUSE syntax checks
-├── docs/
-│   ├── API.md                        # HTTP REST API specification
-│   ├── BUILD.md                      # Compilation guide & SDK requirements
-│   ├── IMPLEMENTATION_STATUS.md      # Protocol & platform implementation details
-│   ├── NFS_TEST_PLAN.md              # Test matrix for NFS exports
-│   └── THIRD_PARTY_NOTICES.md        # Open-source licenses (libnfs, libsmb2, FUSE)
 ├── native/
-│   ├── json.hpp                      # Zero-dependency, standards-compliant JSON parser
-│   ├── main.cpp                      # HTTP server, REST routing, socket worker threads
-│   ├── mount_backend.hpp / .cpp      # Core mount orchestration & status state machine
-│   ├── nfs_fuse.hpp / .cpp           # NFS FUSE adapter (libnfs)
-│   ├── smb_fuse.hpp / .cpp           # SMB FUSE adapter (libsmb2)
-│   └── web_assets.hpp                # Deterministically generated C++ header of the embedded UI
-├── tests/
-│   ├── http_smoke.py                 # Automated HTTP/REST and security test suite
-│   ├── net_stubs.cpp                 # Host networking stubs for Linux development
-│   └── test_json.cpp                 # JSON parser unit test suite
-├── tools/
-│   └── embed_ui.py                   # Compresses and embeds web/index.html into C++ header
-└── web/
-    └── index.html                    # Single-page web UI with ProsperoMgr styling
+│   ├── share.hpp               # backend interface, node info, path helpers
+│   ├── vfs.hpp / .cpp          # the mount table, resolution, listing cache
+│   ├── nfs_share.cpp           # libnfs backend (v3 with v4 fallback, export walk-down)
+│   ├── smb_share.cpp           # libsmb2 backend (guest/authenticated, domain support)
+│   ├── posix_shim.cpp          # the __wrap_* file and directory calls
+│   ├── wrap.list               # symbols the Makefile passes to --wrap
+│   ├── mount_backend.hpp/.cpp  # request validation and orchestration
+│   ├── main.cpp                # HTTP server, REST routes, console integration
+│   ├── diagnostic_log.*        # rotating log on /data
+│   ├── shortcut.*              # ShadowMountPlus home-screen shortcut
+│   ├── json.hpp                # dependency-free JSON parser
+│   └── web_assets.hpp          # the panel, embedded by tools/embed_ui.py
+├── web/index.html              # panel source
+├── tests/                      # JSON, VFS, shim and HTTP tests (host build)
+├── docs/                       # API, build, architecture, third-party notices
+└── .github/workflows/          # host checks and the PS5 ELF release build
 ```
 
 ---
 
-## Quick Start & Usage
+## Quick start
 
-### 1. Launching the Payload on PS5
-1. Send or run the compiled `ps5nm.elf` using your preferred PS5 payload sender (e.g. Netcat on port `9021` or payload loader).
-2. The payload initializes networking (`sceNetInit`), starts the FUSE subsystem, and begins listening on `0.0.0.0:18080`.
+1. Send `PS5NetworkMounting.elf` with your payload loader. It initialises networking, starts the
+   HTTP server on `0.0.0.0:18080` and shows a toast with the panel URL.
+2. Open `http://<ps5-ip>:18080` from the console browser or any device on the LAN.
+3. Choose NFS or SMB, fill in the server and share details, and press **Connect & Attach**.
 
-### 2. Accessing the Control Panel
-- **From PS5 Browser:** Use the automatic browser launch or navigate to `http://<ps5-ip-address>:18080`.
-- **From PC / Phone / Mac:** Navigate to `http://<ps5-ip-address>:18080`. The console and client device must be on a reachable network.
-- **Home-screen tile:** The tile is a convenience shortcut to the panel, registered through ShadowMountPlus. It does not itself start the network-mounting ELF, so load the payload first after a reboot.
+- **NFS:** server `192.168.1.50`, port `2049`, export `/mnt/dataPool/games`.
+- **SMB:** server `192.168.1.50`, port `445`, share `games` or `games/PS5`, plus a user and
+  password if the server needs them (leave blank for guest).
 
-### 3. Mounting Shares
-- **NFS Share:**
-  - **Server:** `192.168.1.50`
-  - **Port:** `2049` (default)
-  - **Export Path:** `/mnt/dataPool/games` (absolute path as exported on the NAS)
-  - *Tip: Ensure the NFS export allows read permissions and `no_root_squash` or all-squash to a user with read access.*
-- **SMB Share:**
-  - **Server:** `192.168.1.50`
-  - **Port:** `445` (default)
-  - **Share Name:** `games` or `games/PS5` (do not prefix with slashes)
-  - **Username / Password:** Provide if your SMB server requires authentication, or leave blank for guest access.
+From then on, code inside the payload reads `/hostapp/...` from the share. Disconnecting closes
+the session; handles already open stay readable until they are closed.
+
+### Environment variables
+
+| Variable | Meaning |
+|---|---|
+| `PS5NM_PORT` | Panel port (default `18080`) |
+| `PS5NM_BIND` | Bind address (default `0.0.0.0`) |
+| `PS5NM_NO_BROWSER` | `1` disables the automatic WebKit launch |
+| `PS5NM_LOG_DIR` | Directory for the rotating log (default `/data/PS5NetworkMounting`) |
+| `PS5NM_LAUNCHER_ELF` | Launcher path for the home-screen shortcut (non-embedded builds) |
 
 ---
 
-## REST API Reference
-
-The web control panel communicates via JSON endpoints under `/api/v1`:
+## REST API
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/v1/status` | `GET` | Returns live mount status, active protocol, endpoint, and last error. |
-| `/api/v1/log` | `GET` | Downloads the latest bounded diagnostic log as plain text. |
-| `/api/v1/mount` | `POST` | Validates parameters and mounts the requested NFS or SMB share to `/hostapp`. |
-| `/api/v1/unmount` | `POST` | Safely detaches the active FUSE filesystem from `/hostapp`. |
-| `/api/v1/shortcut` | `POST` | Creates the HBRW homebrew folder and requests a ShadowMountPlus scan. |
+| `/api/v1/status` | `GET` | Share layer, protocol, endpoint, state, counters |
+| `/api/v1/mount` | `POST` | Validate and attach an NFS or SMB share |
+| `/api/v1/unmount` | `POST` | Detach the share |
+| `/api/v1/log` | `GET` | Download the diagnostic log |
+| `/api/v1/browser` | `POST` | Open the panel in the PS5 browser |
+| `/api/v1/shortcut` | `POST` | Create the home-screen shortcut |
+| `/api/v1/notify` | `POST` | Send a toast notification |
 
-All `POST` requests require `Content-Type: application/json` and `X-Requested-With: PS5NM`. Detailed request/response schemas can be found in [`docs/API.md`](docs/API.md).
+`POST` bodies are JSON; requests whose `Origin` does not match the `Host` are refused. See
+[`docs/API.md`](docs/API.md).
 
 ---
 
 ## Building
 
-### Building on Host (Linux/macOS for Development & Testing)
 ```bash
-# Compile and run JSON unit tests
-g++ -std=c++17 -O2 -Wall -Wextra -Inative tests/test_json.cpp -o /tmp/test_json
-/tmp/test_json
+# PS5 ELF: needs the payload SDK, libnfs, libsmb2, OpenSSL and zlib
+PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk ORBISDEV=$PS5_PAYLOAD_SDK/target/user/homebrew make
 
-# Compile host binary with network stubs
-g++ -std=c++17 -O2 -Wall -Wextra -Inative \
-    native/main.cpp native/mount_backend.cpp native/shortcut.cpp native/diagnostic_log.cpp tests/net_stubs.cpp \
-    -pthread -o /tmp/ps5nm-host
-
-# Run automated HTTP test suite
-python3 tests/http_smoke.py
+# Host: build, unit tests and the HTTP smoke test
+make test
 ```
 
-### Building the PS5 ELF (Target Build)
-Target compilation requires the OpenOrbis / Prospero toolchain with ORBISDEV libraries (`libfuse`, `libnfs`, `libsmb2`, `mbedtls`, `zlib`).
-```bash
-export OO_PS4_TOOLCHAIN=/path/to/openorbis
-export PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
-make PS5NM_WITH_FUSE=1
-```
-The automated GitHub Actions workflow (`.github/workflows/ps5-full-nfs-smb-build.yml`) builds the full production ELF release automatically on push.
+The `PS5 payload build` workflow builds the ELF and publishes it as a release when `main`
+changes. [`docs/BUILD.md`](docs/BUILD.md) has the details.
 
 ---
 
-## Acknowledgments & Credits
+## Credits
 
-- **[ProsperoMgr](https://github.com/Sweeney-development/ProsperoMgr):** UI design reference, color palette, and styling system.
-- **[Itemzflow](https://github.com/LightningMods/Itemzflow):** Reference implementation for PS5 FUSE / NFS integration (`fuse-nfs`).
-- **[ps5-ezremote-client](https://github.com/Sweeney-development/ps5-ezremote-client):** SMB client and `libsmb2` reference patterns.
-- **[libnfs](https://github.com/sahlberg/libnfs):** Client library for NFS.
-- **[libsmb2](https://github.com/sahlberg/libsmb2):** Client library for SMB2/SMB3.
+- **[PS5SX2](https://github.com/Swordpdf/PS5SX2):** the in-process share architecture this
+  rewrite follows (`OrbisNfs`, the `--wrap` list, the listing cache and read-ahead).
+- **[ProsperoMgr](https://github.com/Sweeney-development/ProsperoMgr):** the panel's visual
+  identity and palette.
+- **[libnfs](https://github.com/sahlberg/libnfs)** and
+  **[libsmb2](https://github.com/sahlberg/libsmb2):** the protocol clients.
+- **[Itemzflow](https://github.com/LightningMods/Itemzflow):** the original FUSE reference this
+  version no longer uses.
